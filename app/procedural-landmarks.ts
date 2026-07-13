@@ -48,6 +48,12 @@ type LandmarkSpec = Readonly<{
   maximumDistance: number;
 }>;
 
+type LandmarkMetricProfile = Readonly<{
+  widthScale: number;
+  depthScale: number;
+  lineScale: number;
+}>;
+
 export type ProceduralLandmarkInstance = Readonly<{
   kind: ProceduralLandmarkKind;
   z: number;
@@ -56,7 +62,15 @@ export type ProceduralLandmarkInstance = Readonly<{
   alpha: number;
 }>;
 
+export type ProceduralLandmarkSite = Readonly<{
+  kind: ProceduralLandmarkKind;
+  world: number;
+  lateral: number;
+  block: number;
+}>;
+
 const TAU = Math.PI * 2;
+const LANDMARK_NEAR_CLIP = 0.12;
 
 const LANDMARK_SPECS: readonly LandmarkSpec[] = [
   {
@@ -64,51 +78,86 @@ const LANDMARK_SPECS: readonly LandmarkSpec[] = [
     phase: 0.055,
     lateral: 132,
     salt: 173,
-    maximumDistance: 1640,
+    maximumDistance: 2600,
   },
   {
     kind: "skytree",
     phase: 0.25,
     lateral: 104,
     salt: 211,
-    maximumDistance: 1520,
+    maximumDistance: 1900,
   },
   {
     kind: "rainbow-bridge",
     phase: 0.679,
     lateral: 10,
     salt: 307,
-    maximumDistance: 1390,
+    maximumDistance: 1800,
   },
   {
     kind: "big-sight",
     phase: 0.604,
-    lateral: 72,
+    lateral: 94,
     salt: 419,
-    maximumDistance: 1260,
+    maximumDistance: 1500,
   },
   {
     kind: "harbor-cranes",
     phase: 0.75,
-    lateral: 84,
+    lateral: 180,
     salt: 503,
-    maximumDistance: 1320,
+    maximumDistance: 1800,
   },
   {
     kind: "tokyo-tower",
     phase: 0.321,
     lateral: 78,
     salt: 617,
-    maximumDistance: 1480,
+    maximumDistance: 2400,
   },
   {
     kind: "tokyo-tower",
     phase: 0.91,
     lateral: 116,
     salt: 683,
-    maximumDistance: 1560,
+    maximumDistance: 2600,
   },
 ] as const;
+
+// The geometry below was authored in compact design units. These profiles map
+// it into meter-scale silhouettes while preserving the recognizable shapes.
+const LANDMARK_METRIC_PROFILES: Readonly<
+  Record<ProceduralLandmarkKind, LandmarkMetricProfile>
+> = {
+  "tokyo-tower": {
+    // 42 design units across the base become approximately 95 meters.
+    widthScale: 95 / 42,
+    depthScale: 1.8,
+    lineScale: 1.9,
+  },
+  skytree: {
+    // The triangular footing is approximately 68 meters across.
+    widthScale: 68 / 38,
+    depthScale: 1,
+    lineScale: 1.75,
+  },
+  "rainbow-bridge": {
+    // The modeled deck becomes roughly 29 meters wide.
+    widthScale: 29 / 17.6,
+    depthScale: 1,
+    lineScale: 1.55,
+  },
+  "big-sight": {
+    widthScale: 1,
+    depthScale: 1,
+    lineScale: 1.08,
+  },
+  "harbor-cranes": {
+    widthScale: 1.55,
+    depthScale: 1.2,
+    lineScale: 1.5,
+  },
+};
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
@@ -133,6 +182,51 @@ function hashInteger(value: number): number {
 
 function seeded(index: number, salt = 0): number {
   return hashInteger(Math.imul(index, 0x1f123bb5) + salt) / 4294967295;
+}
+
+function landmarkSite(
+  spec: LandmarkSpec,
+  block: number,
+  sceneLength: number,
+): ProceduralLandmarkSite {
+  const side = (hashInteger(block + spec.salt) & 1) === 0 ? -1 : 1;
+  const jitter = (seeded(block, spec.salt + 17) - 0.5) * 18;
+  return {
+    kind: spec.kind,
+    world: block * sceneLength + sceneLength * spec.phase,
+    lateral: spec.kind === "rainbow-bridge"
+      ? jitter * 0.12
+      : side * (spec.lateral + jitter),
+    block,
+  };
+}
+
+export function collectProceduralLandmarkSites(
+  sceneLengthInput: number,
+  minimumWorld: number,
+  maximumWorld: number,
+): ProceduralLandmarkSite[] {
+  if (
+    !Number.isFinite(sceneLengthInput) ||
+    !Number.isFinite(minimumWorld) ||
+    !Number.isFinite(maximumWorld) ||
+    maximumWorld < minimumWorld
+  ) {
+    return [];
+  }
+  const sceneLength = Math.max(2400, sceneLengthInput);
+  const sites: ProceduralLandmarkSite[] = [];
+  for (const spec of LANDMARK_SPECS) {
+    const anchor = sceneLength * spec.phase;
+    const firstBlock = Math.floor((minimumWorld - anchor) / sceneLength) - 1;
+    const lastBlock = Math.ceil((maximumWorld - anchor) / sceneLength) + 1;
+    for (let block = firstBlock; block <= lastBlock; block += 1) {
+      const site = landmarkSite(spec, block, sceneLength);
+      if (site.world < minimumWorld || site.world > maximumWorld) continue;
+      sites.push(site);
+    }
+  }
+  return sites;
 }
 
 function rgba(red: number, green: number, blue: number, alpha: number): string {
@@ -166,6 +260,47 @@ function strokePolyline(
   context.stroke();
 }
 
+function metricHeight(
+  kind: ProceduralLandmarkKind,
+  designHeight: number,
+): number {
+  if (kind === "tokyo-tower") {
+    // Main deck 150m, upper deck 250m, antenna tip 333m.
+    if (designHeight <= 62) return (designHeight / 62) * 150;
+    if (designHeight <= 105) {
+      return 150 + ((designHeight - 62) / 43) * 100;
+    }
+    return 250 + ((designHeight - 105) / 65) * 83;
+  }
+  if (kind === "skytree") {
+    // Tembo Deck 350m, Tembo Galleria 450m, antenna tip 634m.
+    if (designHeight <= 116) return (designHeight / 116) * 350;
+    if (designHeight <= 144) {
+      return 350 + ((designHeight - 116) / 28) * 100;
+    }
+    return 450 + ((designHeight - 144) / 72) * 184;
+  }
+  if (kind === "rainbow-bridge") return (designHeight / 58) * 126;
+  if (kind === "big-sight") return (designHeight / 50) * 58;
+  // Tokyo Port's container cranes are roughly 58-65m tall.
+  return (designHeight / 59) * 62;
+}
+
+function projectedScaleAt(
+  options: ProceduralLandmarkOptions,
+  instance: ProceduralLandmarkInstance,
+  zOffset = 0,
+): number {
+  const profile = LANDMARK_METRIC_PROFILES[instance.kind];
+  return (
+    options.project(
+      instance.z + zOffset * profile.depthScale,
+      instance.lateral,
+      0,
+    ).scale * profile.lineScale
+  );
+}
+
 function projectedPoint(
   options: ProceduralLandmarkOptions,
   instance: ProceduralLandmarkInstance,
@@ -173,10 +308,11 @@ function projectedPoint(
   height: number,
   zOffset = 0,
 ): ScreenPoint {
+  const profile = LANDMARK_METRIC_PROFILES[instance.kind];
   const point = options.project(
-    instance.z + zOffset,
-    instance.lateral + lateralOffset,
-    height,
+    instance.z + zOffset * profile.depthScale,
+    instance.lateral + lateralOffset * profile.widthScale,
+    metricHeight(instance.kind, height),
   );
   return { x: point.x, y: point.y };
 }
@@ -185,7 +321,7 @@ function projectedScale(
   options: ProceduralLandmarkOptions,
   instance: ProceduralLandmarkInstance,
 ): number {
-  return options.project(instance.z, instance.lateral, 0).scale;
+  return projectedScaleAt(options, instance);
 }
 
 function projectedHeight(
@@ -210,10 +346,9 @@ function detailLevel(
 }
 
 function landmarkVisibility(z: number, maximumDistance: number): number {
-  const nearFade = smoothstep(38, 118, z);
   const farFade = 1 - smoothstep(maximumDistance - 310, maximumDistance, z);
-  const atmosphere = lerp(0.48, 0.98, 1 - clamp(z / maximumDistance, 0, 1));
-  return nearFade * farFade * atmosphere;
+  const atmosphere = lerp(0.68, 1, 1 - clamp(z / maximumDistance, 0, 1));
+  return farFade * atmosphere;
 }
 
 export function collectProceduralLandmarks(
@@ -224,26 +359,26 @@ export function collectProceduralLandmarks(
 
   for (const spec of LANDMARK_SPECS) {
     const anchor = sceneLength * spec.phase;
+    // A longitudinal bridge remains visible after its near tower passes the
+    // camera because most of the 798 m structure is still ahead.
+    const minimumZ = spec.kind === "rainbow-bridge"
+      ? -693 + LANDMARK_NEAR_CLIP
+      : LANDMARK_NEAR_CLIP;
     const firstBlock = Math.floor(
-      (options.totalDistanceMeters + 32 - anchor) / sceneLength,
+      (options.totalDistanceMeters + minimumZ - anchor) / sceneLength,
     );
     const lastBlock = Math.ceil(
       (options.totalDistanceMeters + spec.maximumDistance - anchor) / sceneLength,
     );
 
     for (let block = firstBlock; block <= lastBlock; block += 1) {
-      const world = block * sceneLength + anchor;
-      const z = world - options.totalDistanceMeters;
-      if (z <= 28 || z >= spec.maximumDistance) continue;
-
-      const side = (hashInteger(block + spec.salt) & 1) === 0 ? -1 : 1;
-      const jitter = (seeded(block, spec.salt + 17) - 0.5) * 18;
+      const site = landmarkSite(spec, block, sceneLength);
+      const z = site.world - options.totalDistanceMeters;
+      if (z <= minimumZ || z >= spec.maximumDistance) continue;
       instances.push({
         kind: spec.kind,
         z,
-        lateral: spec.kind === "rainbow-bridge"
-          ? jitter * 0.12
-          : side * (spec.lateral + jitter),
+        lateral: site.lateral,
         block,
         alpha: landmarkVisibility(z, spec.maximumDistance),
       });
@@ -260,23 +395,27 @@ function isPotentiallyVisible(
   heightMeters: number,
   halfWidthMeters: number,
 ): boolean {
-  const base = options.project(instance.z, instance.lateral, 0);
-  const top = options.project(instance.z, instance.lateral, heightMeters);
-  const halfWidth = halfWidthMeters * base.scale;
+  const base = projectedPoint(options, instance, 0, 0);
+  const top = projectedPoint(options, instance, 0, heightMeters);
+  const profile = LANDMARK_METRIC_PROFILES[instance.kind];
+  const halfWidth =
+    halfWidthMeters *
+    profile.widthScale *
+    options.project(instance.z, instance.lateral, 0).scale;
   const margin = Math.max(80, halfWidth * 0.3);
   return (
-    Math.abs(base.groundY - top.y) >= 2.2 &&
+    Math.abs(base.y - top.y) >= 2.2 &&
     base.x + halfWidth >= -margin &&
     base.x - halfWidth <= options.cssWidth + margin &&
     top.y <= options.cssHeight + margin &&
-    base.groundY >= -margin
+    base.y >= -margin
   );
 }
 
 function towerHalfWidth(height: number): number {
-  if (height <= 63) return lerp(18.5, 8.1, height / 63);
-  if (height <= 112) return lerp(8.1, 3.1, (height - 63) / 49);
-  return lerp(3.1, 1.25, clamp((height - 112) / 24, 0, 1));
+  if (height <= 63) return lerp(20.5, 6.6, height / 63);
+  if (height <= 112) return lerp(6.6, 2.5, (height - 63) / 49);
+  return lerp(2.5, 0.9, clamp((height - 112) / 24, 0, 1));
 }
 
 function drawTokyoTower(
@@ -404,8 +543,8 @@ function drawTokyoTower(
     ]);
   };
 
-  drawDeck(62, 9.7, 6.7);
-  drawDeck(105, 5.1, 4.2);
+  drawDeck(62, 6.8, 6.7);
+  drawDeck(105, 4.4, 4.2);
 
   context.globalAlpha = landmarkAlpha;
   const mastSegments = [
@@ -585,8 +724,8 @@ function drawSkytree(
     context.stroke();
   };
 
-  drawObservationDeck(116, 7.4, 3.1);
-  drawObservationDeck(144, 5.3, 2.5);
+  drawObservationDeck(116, 14, 5.5);
+  drawObservationDeck(144, 10.5, 4.5);
 
   context.globalAlpha = landmarkAlpha;
   context.strokeStyle = "rgba(211, 225, 226, 0.96)";
@@ -650,9 +789,14 @@ function drawRainbowBridge(
   const fineAlpha = smoothstep(60, 142, heightPixels);
   const landmarkAlpha = context.globalAlpha * instance.alpha;
   const glowAlpha = glow.globalAlpha * instance.alpha;
-  const nearOffset = Math.max(-92, 22 - instance.z);
-  const farOffset = 238;
-  const towerOffsets = [32, 148] as const;
+  // The anchor is the near main tower. A 105m approach, 570m main span and
+  // 123m far approach reproduce the bridge's representative 798m length.
+  const farOffset = 693;
+  const nearOffset = Math.min(
+    farOffset,
+    Math.max(-105, LANDMARK_NEAR_CLIP - instance.z),
+  );
+  const towerOffsets = [0, 570] as const;
   const deckTop = 2.25;
 
   context.save();
@@ -685,11 +829,7 @@ function drawRainbowBridge(
   }
 
   const drawTower = (zOffset: number, rear: boolean): void => {
-    const towerScale = options.project(
-      instance.z + zOffset,
-      instance.lateral,
-      0,
-    ).scale;
+    const towerScale = projectedScaleAt(options, instance, zOffset);
     const structureColor = rear
       ? "rgba(105, 126, 133, 0.86)"
       : "rgba(184, 205, 211, 0.98)";
@@ -734,8 +874,12 @@ function drawRainbowBridge(
     context.globalAlpha = landmarkAlpha;
   };
 
-  drawTower(towerOffsets[1], true);
-  drawTower(towerOffsets[0], false);
+  if (instance.z + towerOffsets[1] > LANDMARK_NEAR_CLIP) {
+    drawTower(towerOffsets[1], true);
+  }
+  if (instance.z + towerOffsets[0] > LANDMARK_NEAR_CLIP) {
+    drawTower(towerOffsets[0], false);
+  }
 
   const cableHeight = (zOffset: number): number => {
     const [nearTower, farTower] = towerOffsets;
@@ -773,7 +917,7 @@ function drawRainbowBridge(
     context.globalAlpha = landmarkAlpha * fineAlpha;
     context.strokeStyle = "rgba(164, 195, 203, 0.73)";
     context.lineWidth = clamp(scale * 0.18, 0.4, 1.3);
-    const hangerStep = detailLevel(options.quality, 26, 18, 13);
+    const hangerStep = detailLevel(options.quality, 45, 32, 24);
     for (let zOffset = nearOffset + hangerStep; zOffset < farOffset; zOffset += hangerStep) {
       strokePolyline(context, [
         projectedPoint(options, instance, side * deckHalfWidth, deckTop, zOffset),
@@ -797,7 +941,7 @@ function drawRainbowBridge(
 
   context.globalAlpha = landmarkAlpha;
   context.fillStyle = "rgba(211, 238, 242, 0.92)";
-  const lightStep = detailLevel(options.quality, 36, 27, 21);
+  const lightStep = detailLevel(options.quality, 58, 42, 31);
   for (let zOffset = nearOffset + 8; zOffset < farOffset; zOffset += lightStep) {
     for (const side of [-1, 1] as const) {
       const light = projectedPoint(
@@ -821,6 +965,7 @@ function drawRainbowBridge(
   context.restore();
 
   for (const zOffset of towerOffsets) {
+    if (instance.z + zOffset <= LANDMARK_NEAR_CLIP) continue;
     for (const side of [-1, 1] as const) {
       const beacon = projectedPoint(options, instance, side * 7.2, 57.2, zOffset);
       options.glowDot(
@@ -1001,12 +1146,9 @@ function drawHarborCranes(
       (seeded(seed, 719) - 0.5) * 6
     );
     const zOffset = index * 23 + seeded(seed, 727) * 12;
-    const craneScale = options.project(
-      instance.z + zOffset,
-      instance.lateral + lateralOffset,
-      0,
-    ).scale;
-    const height = 45 + seeded(seed, 733) * 11;
+    const craneScale = projectedScaleAt(options, instance, zOffset);
+    // Tokyo Port's shuttle-boom cranes cluster around 58-62m tall.
+    const height = 55 + seeded(seed, 733) * 4;
     const span = 26 + seeded(seed, 739) * 8;
     const top = height * 0.78;
     const boomLength = 28 + seeded(seed, 743) * 12;

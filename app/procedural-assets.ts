@@ -302,8 +302,8 @@ function paintBoard(context: Context2D, width: number, height: number, palette: 
   roundedRect(context, 4, 4, width - 8, height - 8, Math.max(9, height * 0.045));
   const gradient = context.createLinearGradient(0, 0, 0, height);
   gradient.addColorStop(0, palette.background);
-  gradient.addColorStop(0.52, palette.background);
-  gradient.addColorStop(1, "#07161b");
+  gradient.addColorStop(0.68, palette.background);
+  gradient.addColorStop(1, palette.background);
   context.fillStyle = gradient;
   context.fill();
   context.strokeStyle = palette.edge;
@@ -349,6 +349,47 @@ function badge(context: Context2D, x: number, y: number, size: number, value: st
   text(context, value, x, y + size * 0.02, size * 0.82, size * 0.48, "#fff", 800);
 }
 
+function routeMark(context: Context2D, x: number, y: number, size: number, value: string): void {
+  context.save();
+  context.fillStyle = "rgba(4, 105, 55, .72)";
+  context.strokeStyle = "rgba(255,255,255,.96)";
+  context.lineWidth = Math.max(3, size * 0.055);
+  if (value.startsWith("C")) {
+    context.beginPath();
+    context.arc(x, y, size * 0.43, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+  } else {
+    roundedRect(context, x - size * 0.42, y - size * 0.46, size * 0.84, size * 0.92, size * 0.16);
+    context.fill();
+    context.stroke();
+  }
+  text(context, value, x, y + size * 0.015, size * 0.7, size * 0.46, "#fff", 800);
+  context.restore();
+}
+
+function exitNumberBox(
+  context: Context2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  value: string,
+): void {
+  context.fillStyle = "#f4fff6";
+  context.fillRect(x, y, width, height);
+  text(
+    context,
+    value,
+    x + width * 0.5,
+    y + height * 0.52,
+    width * 0.9,
+    height * 0.58,
+    "#087b3d",
+    800,
+  );
+}
+
 function arrow(context: Context2D, x: number, y: number, length: number, direction: "up" | "left" | "right", color: string): void {
   context.save();
   context.translate(x, y);
@@ -370,37 +411,37 @@ function arrow(context: Context2D, x: number, y: number, length: number, directi
   context.restore();
 }
 
-const GREEN: SignPalette = { background: "#075a45", edge: "#d8f3e8", foreground: "#f4fff9", glow: "#7dffd7" };
-const BLUE: SignPalette = { background: "#07558e", edge: "#d8efff", foreground: "#f4fbff", glow: "#68c7ff" };
+const GREEN: SignPalette = { background: "#168944", edge: "#e9fff1", foreground: "#f7fff9", glow: "#72e6a5" };
+const BLUE: SignPalette = { background: "#1467aa", edge: "#e9f6ff", foreground: "#f7fbff", glow: "#68c7ff" };
 const LED: SignPalette = { background: "#11100d", edge: "#4c514d", foreground: "#ff9b26", glow: "#ff7a18" };
 const DARK: SignPalette = { background: "#101b22", edge: "#a7b9bd", foreground: "#eaf7f3", glow: "#62ffc7" };
 
 function routeSign(title: string, subtitle: string, route: string, direction: "up" | "left" | "right"): SignDefinition["render"] {
   return (context, width, height) => {
-    badge(context, height * 0.23, height * 0.28, height * 0.32, route, "#08614b");
-    text(context, title, width * 0.52, height * 0.28, width * 0.65, height * 0.25, "#fff", 750);
-    text(context, subtitle, width * 0.52, height * 0.54, width * 0.66, height * 0.105, "#eafff8", 600);
-    arrow(context, width * 0.82, height * 0.76, height * 0.32, direction, "#fff");
+    routeMark(context, width * 0.15, height * 0.27, height * 0.34, route);
+    text(context, title, width * 0.47, height * 0.25, width * 0.56, height * 0.24, "#fff", 800);
+    text(context, subtitle, width * 0.47, height * 0.48, width * 0.58, height * 0.115, "#f4fff7", 650);
+    arrow(context, width * 0.79, height * 0.74, height * 0.36, direction, "#fff");
   };
 }
 
 function definitions(): SignDefinition[] {
   return [
-    { family: "green-central-loop", widthMeters: 8, heightMeters: 3, palette: GREEN, render: routeSign("都心環状線", "INNER CIRCULAR / GINZA", "C1", "up") },
-    { family: "green-central-loop-left", widthMeters: 8, heightMeters: 3, palette: GREEN, render: routeSign("北池袋・新宿", "KITA-IKEBUKURO / SHINJUKU", "C2", "left") },
-    { family: "green-bayshore", widthMeters: 8, heightMeters: 3, palette: GREEN, render: routeSign("湾岸線・空港", "BAYSHORE ROUTE / AIRPORT", "B", "right") },
-    { family: "green-exit", widthMeters: 8, heightMeters: 2, palette: GREEN, render: (c, w, h) => { text(c, "出口  霞が関", w * .42, h * .36, w * .68, h * .3, "#fff", 800); text(c, "EXIT  KASUMIGASEKI   500 m", w * .43, h * .72, w * .72, h * .16, "#eafff8", 650); arrow(c, w * .88, h * .54, h * .48, "right", "#fff"); } },
-    { family: "green-junction", widthMeters: 8, heightMeters: 3, palette: GREEN, render: routeSign("箱崎 JCT", "HAKOZAKI JUNCTION", "C1", "right") },
-    { family: "green-double-panel", widthMeters: 12, heightMeters: 3, palette: GREEN, render: (c, w, h) => { c.strokeStyle = "rgba(255,255,255,.65)"; c.lineWidth = 4; c.beginPath(); c.moveTo(w / 2, 18); c.lineTo(w / 2, h - 18); c.stroke(); badge(c, h * .2, h * .28, h * .3, "C1", "#08614b"); badge(c, w * .58, h * .28, h * .3, "B", "#08614b"); text(c, "銀座・上野", w * .3, h * .34, w * .31, h * .2, "#fff"); text(c, "GINZA / UENO", w * .3, h * .62, w * .32, h * .1, "#fff", 600); text(c, "湾岸・羽田", w * .76, h * .34, w * .34, h * .2, "#fff"); text(c, "BAYSHORE / HANEDA", w * .76, h * .62, w * .36, h * .1, "#fff", 600); arrow(c, w * .43, h * .78, h * .3, "left", "#fff"); arrow(c, w * .91, h * .78, h * .3, "right", "#fff"); } },
-    { family: "blue-city-guide", widthMeters: 8, heightMeters: 3, palette: BLUE, render: (c, w, h) => { text(c, "臨海都心・港区", w * .5, h * .3, w * .78, h * .23, "#fff"); text(c, "WATERFRONT / MINATO CITY", w * .5, h * .57, w * .8, h * .11, "#e8f7ff", 600); arrow(c, w * .5, h * .82, h * .3, "up", "#fff"); } },
+    { family: "green-central-loop", widthMeters: 8.6, heightMeters: 3.1, palette: GREEN, render: routeSign("神田橋", "Kandabashi / Ginza", "C1", "up") },
+    { family: "green-central-loop-left", widthMeters: 8.8, heightMeters: 3.1, palette: GREEN, render: routeSign("北池袋・新宿", "Kita-ikebukuro / Shinjuku", "5", "left") },
+    { family: "green-bayshore", widthMeters: 8.8, heightMeters: 3.1, palette: GREEN, render: routeSign("湾岸線・羽田", "Bayshore Route / Haneda", "B", "right") },
+    { family: "green-exit", widthMeters: 10.2, heightMeters: 2.8, palette: GREEN, render: (c, w, h) => { c.fillStyle = "#1467aa"; c.fillRect(w * .025, h * .04, w * .25, h * .92); text(c, "神保町", w * .145, h * .22, w * .21, h * .19, "#fff", 800); text(c, "Jinbocho", w * .145, h * .39, w * .21, h * .1, "#fff", 650); text(c, "飯田橋", w * .145, h * .62, w * .21, h * .19, "#fff", 800); text(c, "Iidabashi", w * .145, h * .79, w * .21, h * .1, "#fff", 650); text(c, "西神田", w * .53, h * .27, w * .42, h * .27, "#fff", 800); text(c, "Nishi-kanda", w * .53, h * .49, w * .42, h * .12, "#fff", 650); exitNumberBox(c, w * .34, h * .66, w * .28, h * .19, "出口 501"); text(c, "400m", w * .72, h * .77, w * .18, h * .17, "#fff", 750); arrow(c, w * .86, h * .56, h * .48, "right", "#fff"); } },
+    { family: "green-junction", widthMeters: 9.4, heightMeters: 3.1, palette: GREEN, render: routeSign("箱崎 JCT", "Hakozaki Junction", "6", "right") },
+    { family: "green-double-panel", widthMeters: 12.4, heightMeters: 3.2, palette: GREEN, render: (c, w, h) => { c.strokeStyle = "rgba(255,255,255,.82)"; c.lineWidth = 4; c.beginPath(); c.moveTo(w / 2, 18); c.lineTo(w / 2, h - 18); c.stroke(); routeMark(c, w * .1, h * .27, h * .32, "5"); routeMark(c, w * .59, h * .27, h * .32, "C1"); text(c, "北池袋", w * .3, h * .25, w * .3, h * .21, "#fff", 800); text(c, "Kita-ikebukuro", w * .3, h * .47, w * .32, h * .1, "#fff", 650); text(c, "神田橋・箱崎", w * .77, h * .25, w * .31, h * .2, "#fff", 800); text(c, "Kandabashi / Hakozaki", w * .77, h * .48, w * .34, h * .085, "#fff", 650); arrow(c, w * .4, h * .76, h * .34, "left", "#ed4b4b"); arrow(c, w * .9, h * .76, h * .34, "up", "#2ea7f2"); text(c, "500m", w * .5, h * .87, w * .15, h * .1, "#fff", 700); } },
+    { family: "green-next-exit", widthMeters: 10.2, heightMeters: 2.8, palette: GREEN, render: (c, w, h) => { c.fillStyle = "#1467aa"; c.fillRect(w * .025, h * .04, w * .27, h * .92); text(c, "霞が関", w * .16, h * .29, w * .23, h * .21, "#fff", 800); text(c, "Kasumigaseki", w * .16, h * .5, w * .24, h * .1, "#fff", 650); text(c, "銀座", w * .51, h * .27, w * .3, h * .26, "#fff", 800); text(c, "Ginza", w * .51, h * .49, w * .3, h * .12, "#fff", 650); exitNumberBox(c, w * .37, h * .68, w * .28, h * .18, "出口 15"); text(c, "次は  Next", w * .81, h * .23, w * .26, h * .14, "#fff", 700); text(c, "芝公園", w * .81, h * .48, w * .25, h * .2, "#fff", 800); text(c, "Shibakoen", w * .81, h * .69, w * .25, h * .1, "#fff", 650); } },
     { family: "blue-parking", widthMeters: 4, heightMeters: 2, palette: BLUE, render: (c, w, h) => { badge(c, h * .48, h * .5, h * .62, "P", "#0968a4"); text(c, "芝浦 PA", w * .66, h * .36, w * .53, h * .25, "#fff"); text(c, "SHIBAURA  1 km", w * .66, h * .68, w * .54, h * .12, "#fff", 600); } },
     { family: "led-roadwork", widthMeters: 8, heightMeters: 2, palette: LED, render: (c, w, h) => { c.shadowColor = "#ff6b12"; c.shadowBlur = 22; text(c, "この先 工事", w * .5, h * .34, w * .84, h * .28, "#ff9b26", 800); text(c, "ROAD WORK  1 km", w * .5, h * .72, w * .82, h * .15, "#ffbd57", 700); c.shadowBlur = 0; } },
     { family: "led-congestion", widthMeters: 8, heightMeters: 2, palette: LED, render: (c, w, h) => { c.shadowColor = "#ff5419"; c.shadowBlur = 20; text(c, "渋滞  3 km", w * .5, h * .34, w * .82, h * .28, "#ff8c24", 800); text(c, "CONGESTION  20 MIN", w * .5, h * .72, w * .82, h * .15, "#ffc15c", 700); c.shadowBlur = 0; } },
     { family: "lane-control-open", widthMeters: 8, heightMeters: 3, palette: DARK, render: (c, w, h) => { text(c, "LANE CONTROL", w * .5, h * .18, w * .86, h * .13, "#d9ffff", 650); for (let i = 0; i < 3; i += 1) arrow(c, w * (.24 + i * .26), h * .63, h * .46, "up", i === 1 ? "#69ffb6" : "#54bfff"); } },
     { family: "lane-control-merge", widthMeters: 8, heightMeters: 3, palette: DARK, render: (c, w, h) => { text(c, "右車線 規制", w * .5, h * .2, w * .82, h * .17, "#fff", 750); arrow(c, w * .3, h * .67, h * .4, "up", "#61ffad"); c.strokeStyle = "#ff553d"; c.lineWidth = h * .09; c.beginPath(); c.moveTo(w * .65, h * .48); c.lineTo(w * .82, h * .78); c.moveTo(w * .82, h * .48); c.lineTo(w * .65, h * .78); c.stroke(); } },
-    { family: "advertising-vertical-cyan", widthMeters: 3, heightMeters: 6, palette: { background: "#087f91", edge: "#d4fbff", foreground: "#fff", glow: "#54eaff" }, render: (c, w, h) => { text(c, "TOKYO", w * .5, h * .18, w * .78, h * .1, "#fff", 800); text(c, "AFTER", w * .5, h * .32, w * .78, h * .1, "#c8fbff", 800); text(c, "IMAGE", w * .5, h * .45, w * .78, h * .1, "#c8fbff", 800); c.strokeStyle = "#a9ffff"; c.lineWidth = w * .025; c.beginPath(); c.arc(w * .5, h * .68, w * .23, 0, Math.PI * 2); c.stroke(); text(c, "夜間都市研究", w * .5, h * .88, w * .82, h * .06, "#fff", 650); } },
-    { family: "advertising-vertical-magenta", widthMeters: 3, heightMeters: 6, palette: { background: "#6c194f", edge: "#ffd3ee", foreground: "#fff", glow: "#ff5bc3" }, render: (c, w, h) => { text(c, "MIDNIGHT", w * .5, h * .21, w * .82, h * .075, "#fff", 800); text(c, "SIGNAL", w * .5, h * .34, w * .82, h * .1, "#ffbce9", 800); c.fillStyle = "rgba(255,180,227,.7)"; for (let i = 0; i < 6; i += 1) c.fillRect(w * (.18 + i * .11), h * (.5 + (i % 2) * .04), w * .035, h * .24); text(c, "都市の鼓動", w * .5, h * .86, w * .8, h * .06, "#fff", 650); } },
-    { family: "advertising-blue-white", widthMeters: 8, heightMeters: 3, palette: { background: "#e8f5fa", edge: "#75bcdd", foreground: "#065f91", glow: "#55c8ff" }, render: (c, w, h) => { text(c, "BAY GLASS", w * .5, h * .34, w * .82, h * .25, "#096a9e", 800); c.fillStyle = "#3db7d4"; c.fillRect(w * .13, h * .55, w * .74, h * .045); text(c, "海辺の光を、都市へ。", w * .5, h * .73, w * .8, h * .11, "#174d6a", 650); } },
+    { family: "advertising-vertical-cyan", widthMeters: 3, heightMeters: 6, palette: { background: "#087f91", edge: "#d4fbff", foreground: "#fff", glow: "#54eaff" }, render: (c, w, h) => { text(c, "TOKYO", w * .5, h * .18, w * .78, h * .1, "#fff", 800); text(c, "AFTER", w * .5, h * .32, w * .78, h * .1, "#c8fbff", 800); text(c, "IMAGE", w * .5, h * .45, w * .78, h * .1, "#c8fbff", 800); c.strokeStyle = "#a9ffff"; c.lineWidth = w * .025; c.beginPath(); c.arc(w * .5, h * .68, w * .23, 0, Math.PI * 2); c.stroke(); text(c, "NIGHT CITY STUDIES", w * .5, h * .88, w * .82, h * .052, "#fff", 650); } },
+    { family: "advertising-vertical-magenta", widthMeters: 3, heightMeters: 6, palette: { background: "#6c194f", edge: "#ffd3ee", foreground: "#fff", glow: "#ff5bc3" }, render: (c, w, h) => { text(c, "MIDNIGHT", w * .5, h * .21, w * .82, h * .075, "#fff", 800); text(c, "SIGNAL", w * .5, h * .34, w * .82, h * .1, "#ffbce9", 800); c.fillStyle = "rgba(255,180,227,.7)"; for (let i = 0; i < 6; i += 1) c.fillRect(w * (.18 + i * .11), h * (.5 + (i % 2) * .04), w * .035, h * .24); text(c, "URBAN FREQUENCY", w * .5, h * .86, w * .8, h * .052, "#fff", 650); } },
+    { family: "advertising-blue-white", widthMeters: 8, heightMeters: 3, palette: { background: "#e8f5fa", edge: "#75bcdd", foreground: "#065f91", glow: "#55c8ff" }, render: (c, w, h) => { text(c, "BAY GLASS", w * .5, h * .34, w * .82, h * .25, "#096a9e", 800); c.fillStyle = "#3db7d4"; c.fillRect(w * .13, h * .55, w * .74, h * .045); text(c, "COASTAL LIGHT / TOKYO", w * .5, h * .73, w * .8, h * .1, "#174d6a", 650); } },
     { family: "advertising-cyan-horizontal", widthMeters: 8, heightMeters: 3, palette: { background: "#0c607d", edge: "#bbf1ff", foreground: "#fff", glow: "#4ed9ff" }, render: (c, w, h) => { text(c, "AETHER CITY", w * .5, h * .33, w * .84, h * .23, "#ddfaff", 800); text(c, "NEW TOKYO  2036", w * .5, h * .64, w * .8, h * .13, "#75e7ff", 700); text(c, "MOVE BEYOND", w * .5, h * .82, w * .72, h * .08, "#fff", 600); } },
   ];
 }
