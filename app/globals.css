@@ -1,0 +1,509 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --ink: #e8f2f5;
+  --muted: rgba(219, 234, 240, 0.58);
+  --line: rgba(205, 226, 234, 0.2);
+  --glass: rgba(3, 9, 13, 0.42);
+  --cyan: #8de3ff;
+  --orange: #ff7841;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #010407;
+  color: var(--ink);
+  font-family:
+    "Avenir Next", Avenir, "Helvetica Neue", "Hiragino Kaku Gothic ProN",
+    "Yu Gothic", YuGothic, Meiryo, sans-serif;
+}
+
+button {
+  font: inherit;
+}
+
+.drive-shell {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 58%, #0a1820 0, #02070b 44%, #010305 78%);
+}
+
+.drive-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: default;
+  touch-action: none;
+}
+
+.cinema-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    inset 0 0 140px rgba(0, 0, 0, 0.28);
+}
+
+.optical-noise {
+  position: absolute;
+  inset: -40%;
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0.115;
+  mix-blend-mode: soft-light;
+  background-image:
+    repeating-radial-gradient(
+      circle at 17% 31%,
+      transparent 0,
+      rgba(255, 255, 255, 0.16) 0.45px,
+      transparent 0.8px,
+      transparent 4px
+    ),
+    repeating-radial-gradient(
+      circle at 73% 62%,
+      transparent 0,
+      rgba(255, 255, 255, 0.1) 0.35px,
+      transparent 0.7px,
+      transparent 3px
+    );
+  background-size: 91px 77px, 67px 83px;
+  animation: grain-shift 0.24s steps(2, end) infinite;
+}
+
+.hud {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: clamp(22px, 3vw, 48px);
+  pointer-events: none;
+  transition: opacity 420ms ease;
+}
+
+.hud.is-hidden {
+  opacity: 0;
+}
+
+.hud-header,
+.hud-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.hud-footer {
+  align-items: flex-end;
+}
+
+.title-lockup {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  filter: drop-shadow(0 2px 12px rgba(0, 0, 0, 0.8));
+}
+
+.route-disc {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 2px solid rgba(238, 247, 250, 0.86);
+  border-radius: 50%;
+  color: #f3fafc;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: -0.06em;
+}
+
+.kicker,
+.subtitle,
+.live-status,
+.keyboard-hint {
+  margin: 0;
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  line-height: 1.5;
+}
+
+.title-lockup h1 {
+  margin: 1px 0 0;
+  color: rgba(241, 248, 250, 0.92);
+  font-size: clamp(13px, 1.25vw, 17px);
+  font-weight: 520;
+  letter-spacing: 0.2em;
+  line-height: 1.2;
+}
+
+.subtitle {
+  margin-top: 3px;
+  font-family: inherit;
+  letter-spacing: 0.14em;
+}
+
+.live-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  border: 1px solid rgba(220, 238, 242, 0.12);
+  border-radius: 999px;
+  background: rgba(1, 6, 9, 0.28);
+  backdrop-filter: blur(12px);
+}
+
+.live-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #79dfff;
+  box-shadow: 0 0 12px #5dd7ff;
+  animation: signal 2.4s ease-in-out infinite;
+}
+
+.telemetry-panel {
+  display: flex;
+  align-items: flex-end;
+  gap: clamp(15px, 2vw, 30px);
+  padding: 13px 15px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(15, 27, 33, 0.55), rgba(2, 7, 10, 0.34));
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(16px) saturate(115%);
+}
+
+.speed-readout {
+  display: flex;
+  align-items: flex-end;
+  min-width: 92px;
+  gap: 7px;
+}
+
+.speed-readout strong {
+  font-family: "DIN Alternate", "Arial Narrow", sans-serif;
+  font-size: clamp(30px, 4vw, 53px);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.055em;
+  line-height: 0.74;
+  text-shadow: 0 0 24px rgba(114, 218, 255, 0.2);
+}
+
+.speed-readout span,
+.distance-readout span,
+.route-readout span {
+  display: block;
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+}
+
+.speed-readout span {
+  padding-bottom: 1px;
+}
+
+.route-readout {
+  min-width: min(26vw, 250px);
+  padding-left: clamp(14px, 2vw, 28px);
+  border-left: 1px solid var(--line);
+}
+
+.route-readout .route-name {
+  margin-bottom: 5px;
+  color: rgba(232, 244, 247, 0.9);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+
+.route-readout .scene-name {
+  color: rgba(127, 218, 246, 0.56);
+}
+
+.distance-readout {
+  padding-left: clamp(14px, 2vw, 28px);
+  border-left: 1px solid var(--line);
+  text-align: right;
+}
+
+.distance-readout strong {
+  display: block;
+  margin-top: 4px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.drive-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(3, 10, 14, 0.5);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(16px) saturate(120%);
+  pointer-events: auto;
+}
+
+.drive-controls button,
+.restore-hud {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(230, 241, 244, 0.68);
+  cursor: pointer;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.drive-controls button:hover,
+.drive-controls button:focus-visible,
+.restore-hud:hover,
+.restore-hud:focus-visible {
+  outline: none;
+  background: rgba(173, 224, 240, 0.12);
+  color: #f1fbff;
+  transform: translateY(-1px);
+}
+
+.drive-controls button[aria-pressed="true"] {
+  color: #92e5ff;
+  background: rgba(97, 199, 232, 0.12);
+}
+
+.drive-controls .primary-control {
+  background: rgba(225, 240, 245, 0.1);
+  color: #f3fafc;
+}
+
+.control-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 2px;
+  background: var(--line);
+}
+
+.restore-hud {
+  position: absolute;
+  right: 22px;
+  bottom: 22px;
+  z-index: 8;
+  width: 48px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(3, 10, 14, 0.48);
+  backdrop-filter: blur(12px);
+}
+
+.startup-title {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 6;
+  display: flex;
+  width: min(520px, 80vw);
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+  opacity: 0;
+  text-align: center;
+  transform: translate(-50%, -50%);
+}
+
+.drive-shell[data-ready="true"] .startup-title {
+  animation: title-sequence 5.2s ease both;
+}
+
+.startup-title span {
+  color: rgba(186, 216, 226, 0.62);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  letter-spacing: 0.3em;
+}
+
+.startup-title strong {
+  font-size: clamp(22px, 3.5vw, 46px);
+  font-weight: 350;
+  letter-spacing: 0.15em;
+  text-shadow: 0 4px 32px rgba(0, 0, 0, 0.84);
+}
+
+.startup-title i {
+  width: 1px;
+  height: 44px;
+  margin-top: 8px;
+  background: linear-gradient(to bottom, rgba(151, 225, 247, 0.8), transparent);
+}
+
+.keyboard-hint {
+  position: absolute;
+  bottom: 11px;
+  left: 50%;
+  z-index: 4;
+  opacity: 0.42;
+  pointer-events: none;
+  font-size: 7px;
+  text-align: center;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+@keyframes grain-shift {
+  0% {
+    transform: translate3d(-2%, 1%, 0);
+  }
+  33% {
+    transform: translate3d(2%, -1%, 0);
+  }
+  66% {
+    transform: translate3d(1%, 2%, 0);
+  }
+  100% {
+    transform: translate3d(-1%, -2%, 0);
+  }
+}
+
+@keyframes signal {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes title-sequence {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 12px));
+  }
+  18%,
+  64% {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% - 8px));
+  }
+}
+
+@media (max-width: 720px) {
+  .hud {
+    padding: 20px 16px;
+  }
+
+  .live-status,
+  .distance-readout,
+  .keyboard-hint {
+    display: none;
+  }
+
+  .hud-footer {
+    align-items: flex-end;
+    flex-direction: column-reverse;
+  }
+
+  .telemetry-panel {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .route-readout {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .drive-controls {
+    align-self: flex-end;
+  }
+
+  .title-lockup h1 {
+    letter-spacing: 0.14em;
+  }
+
+  .route-disc {
+    width: 38px;
+    height: 38px;
+  }
+}
+
+@media (max-height: 560px) {
+  .subtitle,
+  .keyboard-hint,
+  .distance-readout {
+    display: none;
+  }
+
+  .hud {
+    padding-block: 14px;
+  }
+
+  .telemetry-panel {
+    padding-block: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .optical-noise,
+  .live-dot {
+    animation: none;
+  }
+
+  .startup-title,
+  .drive-shell[data-ready="true"] .startup-title {
+    display: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
