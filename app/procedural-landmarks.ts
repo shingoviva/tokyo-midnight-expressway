@@ -33,7 +33,7 @@ export type ProceduralLandmarkOptions = Readonly<{
 
 type ScreenPoint = Readonly<{ x: number; y: number }>;
 
-type LandmarkKind =
+export type ProceduralLandmarkKind =
   | "tokyo-tower"
   | "skytree"
   | "rainbow-bridge"
@@ -41,15 +41,15 @@ type LandmarkKind =
   | "harbor-cranes";
 
 type LandmarkSpec = Readonly<{
-  kind: LandmarkKind;
+  kind: ProceduralLandmarkKind;
   phase: number;
   lateral: number;
   salt: number;
   maximumDistance: number;
 }>;
 
-type LandmarkInstance = Readonly<{
-  kind: LandmarkKind;
+export type ProceduralLandmarkInstance = Readonly<{
+  kind: ProceduralLandmarkKind;
   z: number;
   lateral: number;
   block: number;
@@ -59,6 +59,13 @@ type LandmarkInstance = Readonly<{
 const TAU = Math.PI * 2;
 
 const LANDMARK_SPECS: readonly LandmarkSpec[] = [
+  {
+    kind: "skytree",
+    phase: 0.055,
+    lateral: 132,
+    salt: 173,
+    maximumDistance: 1640,
+  },
   {
     kind: "skytree",
     phase: 0.25,
@@ -93,6 +100,13 @@ const LANDMARK_SPECS: readonly LandmarkSpec[] = [
     lateral: 78,
     salt: 617,
     maximumDistance: 1480,
+  },
+  {
+    kind: "tokyo-tower",
+    phase: 0.91,
+    lateral: 116,
+    salt: 683,
+    maximumDistance: 1560,
   },
 ] as const;
 
@@ -154,7 +168,7 @@ function strokePolyline(
 
 function projectedPoint(
   options: ProceduralLandmarkOptions,
-  instance: LandmarkInstance,
+  instance: ProceduralLandmarkInstance,
   lateralOffset: number,
   height: number,
   zOffset = 0,
@@ -169,14 +183,14 @@ function projectedPoint(
 
 function projectedScale(
   options: ProceduralLandmarkOptions,
-  instance: LandmarkInstance,
+  instance: ProceduralLandmarkInstance,
 ): number {
   return options.project(instance.z, instance.lateral, 0).scale;
 }
 
 function projectedHeight(
   options: ProceduralLandmarkOptions,
-  instance: LandmarkInstance,
+  instance: ProceduralLandmarkInstance,
   height: number,
 ): number {
   const base = projectedPoint(options, instance, 0, 0);
@@ -202,10 +216,10 @@ function landmarkVisibility(z: number, maximumDistance: number): number {
   return nearFade * farFade * atmosphere;
 }
 
-function collectLandmarks(
+export function collectProceduralLandmarks(
   options: ProceduralLandmarkOptions,
-): LandmarkInstance[] {
-  const instances: LandmarkInstance[] = [];
+): ProceduralLandmarkInstance[] {
+  const instances: ProceduralLandmarkInstance[] = [];
   const sceneLength = Math.max(2400, options.sceneLength);
 
   for (const spec of LANDMARK_SPECS) {
@@ -227,7 +241,9 @@ function collectLandmarks(
       instances.push({
         kind: spec.kind,
         z,
-        lateral: side * (spec.lateral + jitter),
+        lateral: spec.kind === "rainbow-bridge"
+          ? jitter * 0.12
+          : side * (spec.lateral + jitter),
         block,
         alpha: landmarkVisibility(z, spec.maximumDistance),
       });
@@ -240,7 +256,7 @@ function collectLandmarks(
 
 function isPotentiallyVisible(
   options: ProceduralLandmarkOptions,
-  instance: LandmarkInstance,
+  instance: ProceduralLandmarkInstance,
   heightMeters: number,
   halfWidthMeters: number,
 ): boolean {
@@ -267,7 +283,7 @@ function drawTokyoTower(
   context: LandmarkDrawContext,
   glow: LandmarkDrawContext,
   options: ProceduralLandmarkOptions,
-  instance: LandmarkInstance,
+  instance: ProceduralLandmarkInstance,
 ): void {
   const totalHeight = 170;
   if (!isPotentiallyVisible(options, instance, totalHeight, 21)) return;
@@ -456,7 +472,7 @@ function drawSkytree(
   context: LandmarkDrawContext,
   glow: LandmarkDrawContext,
   options: ProceduralLandmarkOptions,
-  instance: LandmarkInstance,
+  instance: ProceduralLandmarkInstance,
 ): void {
   const totalHeight = 216;
   if (!isPotentiallyVisible(options, instance, totalHeight, 22)) return;
@@ -622,141 +638,205 @@ function drawRainbowBridge(
   context: LandmarkDrawContext,
   glow: LandmarkDrawContext,
   options: ProceduralLandmarkOptions,
-  instance: LandmarkInstance,
+  instance: ProceduralLandmarkInstance,
 ): void {
-  const totalHeight = 66;
-  const halfSpan = 91;
-  if (!isPotentiallyVisible(options, instance, totalHeight, halfSpan)) return;
+  const totalHeight = 58;
+  const deckHalfWidth = 8.8;
+  if (!isPotentiallyVisible(options, instance, totalHeight, 14)) return;
 
   const scale = projectedScale(options, instance);
   const heightPixels = projectedHeight(options, instance, totalHeight);
-  const detailAlpha = smoothstep(30, 88, heightPixels);
-  const fineAlpha = smoothstep(62, 148, heightPixels);
+  const detailAlpha = smoothstep(28, 82, heightPixels);
+  const fineAlpha = smoothstep(60, 142, heightPixels);
   const landmarkAlpha = context.globalAlpha * instance.alpha;
   const glowAlpha = glow.globalAlpha * instance.alpha;
-  const towerCenters = [-45, 45] as const;
-  const deckBottom = 12;
-  const deckTop = 16.5;
+  const nearOffset = Math.max(-92, 22 - instance.z);
+  const farOffset = 238;
+  const towerOffsets = [32, 148] as const;
+  const deckTop = 2.25;
 
   context.save();
-  context.globalAlpha = landmarkAlpha;
   context.lineCap = "round";
   context.lineJoin = "round";
+  context.globalAlpha = landmarkAlpha;
 
-  context.fillStyle = "rgba(18, 28, 34, 0.96)";
+  context.fillStyle = "rgba(16, 25, 30, 0.94)";
   fillPolygon(context, [
-    projectedPoint(options, instance, -halfSpan, deckBottom, 3.5),
-    projectedPoint(options, instance, halfSpan, deckBottom, 3.5),
-    projectedPoint(options, instance, halfSpan, deckTop, 3.5),
-    projectedPoint(options, instance, -halfSpan, deckTop, 3.5),
-  ]);
-  context.fillStyle = "rgba(75, 91, 99, 0.94)";
-  fillPolygon(context, [
-    projectedPoint(options, instance, -halfSpan, deckTop),
-    projectedPoint(options, instance, halfSpan, deckTop),
-    projectedPoint(options, instance, halfSpan, deckTop + 2.2),
-    projectedPoint(options, instance, -halfSpan, deckTop + 2.2),
-  ]);
-  context.strokeStyle = "rgba(181, 205, 214, 0.76)";
-  context.lineWidth = clamp(scale * 0.25, 0.55, 2.4);
-  strokePolyline(context, [
-    projectedPoint(options, instance, -halfSpan, deckTop + 2.2),
-    projectedPoint(options, instance, halfSpan, deckTop + 2.2),
+    projectedPoint(options, instance, -deckHalfWidth, 0, farOffset),
+    projectedPoint(options, instance, deckHalfWidth, 0, farOffset),
+    projectedPoint(options, instance, deckHalfWidth, 0, nearOffset),
+    projectedPoint(options, instance, -deckHalfWidth, 0, nearOffset),
   ]);
 
-  const drawTower = (center: number, zOffset: number, rear: boolean): void => {
-    const color = rear
-      ? "rgba(93, 114, 122, 0.8)"
-      : "rgba(171, 195, 202, 0.96)";
-    context.fillStyle = color;
-    for (const side of [-1, 1] as const) {
-      const outside = center + side * 5.1;
-      fillPolygon(context, [
-        projectedPoint(options, instance, outside - side * 1.25, deckTop, zOffset),
-        projectedPoint(options, instance, outside - side * 0.7, 62, zOffset),
-        projectedPoint(options, instance, outside + side * 0.7, 62, zOffset),
-        projectedPoint(options, instance, outside + side * 1.25, deckTop, zOffset),
-      ]);
-    }
-    context.strokeStyle = rear
-      ? "rgba(126, 151, 160, 0.58)"
-      : "rgba(218, 234, 237, 0.9)";
-    context.lineWidth = clamp(scale * 0.72, 0.7, 4.4);
-    for (const height of [33, 48, 61]) {
-      strokePolyline(context, [
-        projectedPoint(options, instance, center - 5.2, height, zOffset),
-        projectedPoint(options, instance, center + 5.2, height, zOffset),
-      ]);
-    }
-  };
-
-  for (const center of towerCenters) drawTower(center, 4.5, true);
-  for (const center of towerCenters) drawTower(center, 0, false);
-
-  const cableHeight = (x: number): number => {
-    const absolute = Math.abs(x);
-    if (absolute <= 45) {
-      const normalized = absolute / 45;
-      return 25 + 36 * normalized * normalized;
-    }
-    return lerp(61, 20, clamp((absolute - 45) / (halfSpan - 45), 0, 1));
-  };
-
-  context.globalAlpha = landmarkAlpha * detailAlpha;
-  context.strokeStyle = "rgba(205, 224, 229, 0.92)";
-  context.lineWidth = clamp(scale * 0.62, 0.7, 3.8);
-  const cablePoints: ScreenPoint[] = [];
-  const cableSamples = detailLevel(options.quality, 14, 20, 28);
-  for (let index = 0; index <= cableSamples; index += 1) {
-    const x = lerp(-halfSpan, halfSpan, index / cableSamples);
-    cablePoints.push(projectedPoint(options, instance, x, cableHeight(x)));
-  }
-  strokePolyline(context, cablePoints);
-
-  context.globalAlpha = landmarkAlpha * fineAlpha;
-  context.strokeStyle = "rgba(168, 199, 208, 0.72)";
-  context.lineWidth = clamp(scale * 0.2, 0.45, 1.4);
-  const hangerSpacing = detailLevel(options.quality, 13, 9, 6.5);
-  for (let x = -83; x <= 83; x += hangerSpacing) {
+  for (const side of [-1, 1] as const) {
+    context.fillStyle = "rgba(77, 91, 97, 0.95)";
+    fillPolygon(context, [
+      projectedPoint(options, instance, side * deckHalfWidth, 0.35, farOffset),
+      projectedPoint(options, instance, side * deckHalfWidth, deckTop, farOffset),
+      projectedPoint(options, instance, side * deckHalfWidth, deckTop, nearOffset),
+      projectedPoint(options, instance, side * deckHalfWidth, 0.35, nearOffset),
+    ]);
+    context.strokeStyle = "rgba(192, 215, 222, 0.76)";
+    context.lineWidth = clamp(scale * 0.22, 0.55, 2.2);
     strokePolyline(context, [
-      projectedPoint(options, instance, x, deckTop + 2.2),
-      projectedPoint(options, instance, x, cableHeight(x)),
+      projectedPoint(options, instance, side * deckHalfWidth, deckTop, farOffset),
+      projectedPoint(options, instance, side * deckHalfWidth, deckTop, nearOffset),
     ]);
   }
 
-  context.fillStyle = "rgba(206, 235, 241, 0.9)";
-  const lightSpacing = detailLevel(options.quality, 24, 18, 14);
-  for (let x = -82; x <= 82; x += lightSpacing) {
-    const light = projectedPoint(options, instance, x, deckTop + 2.8);
-    context.beginPath();
-    context.arc(light.x, light.y, clamp(scale * 0.28, 0.55, 1.8), 0, TAU);
-    context.fill();
+  const drawTower = (zOffset: number, rear: boolean): void => {
+    const towerScale = options.project(
+      instance.z + zOffset,
+      instance.lateral,
+      0,
+    ).scale;
+    const structureColor = rear
+      ? "rgba(105, 126, 133, 0.86)"
+      : "rgba(184, 205, 211, 0.98)";
+    context.fillStyle = structureColor;
+    for (const side of [-1, 1] as const) {
+      const baseCenter = side * 10.2;
+      const topCenter = side * 7.2;
+      fillPolygon(context, [
+        projectedPoint(options, instance, baseCenter - 1.25, 0, zOffset),
+        projectedPoint(options, instance, topCenter - 0.75, 56, zOffset),
+        projectedPoint(options, instance, topCenter + 0.75, 56, zOffset),
+        projectedPoint(options, instance, baseCenter + 1.25, 0, zOffset),
+      ]);
+    }
+
+    context.strokeStyle = rear
+      ? "rgba(143, 165, 171, 0.68)"
+      : "rgba(224, 237, 239, 0.92)";
+    context.lineWidth = clamp(towerScale * 0.78, 0.75, 4.6);
+    for (const height of [31, 48, 56]) {
+      const halfWidth = lerp(9.8, 7.3, height / 56);
+      strokePolyline(context, [
+        projectedPoint(options, instance, -halfWidth, height, zOffset),
+        projectedPoint(options, instance, halfWidth, height, zOffset),
+      ]);
+    }
+
+    context.globalAlpha = landmarkAlpha * detailAlpha;
+    context.lineWidth = clamp(towerScale * 0.22, 0.45, 1.55);
+    for (const [low, high] of [[7, 20], [20, 31], [31, 43], [43, 55]] as const) {
+      const lowHalf = lerp(10.1, 7.3, low / 56);
+      const highHalf = lerp(10.1, 7.3, high / 56);
+      strokePolyline(context, [
+        projectedPoint(options, instance, -lowHalf, low, zOffset),
+        projectedPoint(options, instance, highHalf, high, zOffset),
+      ]);
+      strokePolyline(context, [
+        projectedPoint(options, instance, lowHalf, low, zOffset),
+        projectedPoint(options, instance, -highHalf, high, zOffset),
+      ]);
+    }
+    context.globalAlpha = landmarkAlpha;
+  };
+
+  drawTower(towerOffsets[1], true);
+  drawTower(towerOffsets[0], false);
+
+  const cableHeight = (zOffset: number): number => {
+    const [nearTower, farTower] = towerOffsets;
+    if (zOffset <= nearTower) {
+      return lerp(20, 55, smoothstep(nearOffset, nearTower, zOffset));
+    }
+    if (zOffset <= farTower) {
+      const span = (zOffset - nearTower) / (farTower - nearTower);
+      return 22 + Math.pow(Math.abs(span - 0.5) * 2, 2) * 33;
+    }
+    return lerp(55, 19, smoothstep(farTower, farOffset, zOffset));
+  };
+
+  const cableSamples = detailLevel(options.quality, 15, 23, 32);
+  for (const side of [-1, 1] as const) {
+    const cablePoints: ScreenPoint[] = [];
+    for (let index = 0; index <= cableSamples; index += 1) {
+      const zOffset = lerp(nearOffset, farOffset, index / cableSamples);
+      cablePoints.push(
+        projectedPoint(
+          options,
+          instance,
+          side * (deckHalfWidth + 0.45),
+          cableHeight(zOffset),
+          zOffset,
+        ),
+      );
+    }
+
+    context.globalAlpha = landmarkAlpha * detailAlpha;
+    context.strokeStyle = "rgba(207, 226, 230, 0.93)";
+    context.lineWidth = clamp(scale * 0.58, 0.65, 3.5);
+    strokePolyline(context, cablePoints);
+
+    context.globalAlpha = landmarkAlpha * fineAlpha;
+    context.strokeStyle = "rgba(164, 195, 203, 0.73)";
+    context.lineWidth = clamp(scale * 0.18, 0.4, 1.3);
+    const hangerStep = detailLevel(options.quality, 26, 18, 13);
+    for (let zOffset = nearOffset + hangerStep; zOffset < farOffset; zOffset += hangerStep) {
+      strokePolyline(context, [
+        projectedPoint(options, instance, side * deckHalfWidth, deckTop, zOffset),
+        projectedPoint(
+          options,
+          instance,
+          side * (deckHalfWidth + 0.45),
+          cableHeight(zOffset),
+          zOffset,
+        ),
+      ]);
+    }
+
+    glow.save();
+    glow.globalAlpha = glowAlpha * 0.34;
+    glow.strokeStyle = "rgba(126, 205, 229, 0.3)";
+    glow.lineWidth = clamp(scale * 2, 2, 12);
+    strokePolyline(glow, cablePoints);
+    glow.restore();
+  }
+
+  context.globalAlpha = landmarkAlpha;
+  context.fillStyle = "rgba(211, 238, 242, 0.92)";
+  const lightStep = detailLevel(options.quality, 36, 27, 21);
+  for (let zOffset = nearOffset + 8; zOffset < farOffset; zOffset += lightStep) {
+    for (const side of [-1, 1] as const) {
+      const light = projectedPoint(
+        options,
+        instance,
+        side * (deckHalfWidth - 0.55),
+        deckTop + 0.45,
+        zOffset,
+      );
+      context.beginPath();
+      context.arc(light.x, light.y, clamp(scale * 0.22, 0.5, 1.6), 0, TAU);
+      context.fill();
+      options.glowDot(
+        light.x,
+        light.y,
+        clamp(scale * 1.25, 2.5, 10),
+        rgba(155, 222, 238, instance.alpha * 0.16),
+      );
+    }
   }
   context.restore();
 
-  glow.save();
-  glow.globalAlpha = glowAlpha * 0.4;
-  glow.strokeStyle = "rgba(126, 205, 229, 0.28)";
-  glow.lineWidth = clamp(scale * 2.1, 2, 13);
-  strokePolyline(glow, cablePoints);
-  glow.restore();
-
-  for (const center of towerCenters) {
-    const beacon = projectedPoint(options, instance, center, 63);
-    options.glowDot(
-      beacon.x,
-      beacon.y,
-      clamp(scale * 3.1, 3, 16),
-      rgba(240, 45, 39, instance.alpha * 0.5),
-    );
+  for (const zOffset of towerOffsets) {
+    for (const side of [-1, 1] as const) {
+      const beacon = projectedPoint(options, instance, side * 7.2, 57.2, zOffset);
+      options.glowDot(
+        beacon.x,
+        beacon.y,
+        clamp(scale * 3, 3, 15),
+        rgba(240, 45, 39, instance.alpha * 0.48),
+      );
+    }
   }
 }
-
 function drawBigSight(
   context: LandmarkDrawContext,
   glow: LandmarkDrawContext,
   options: ProceduralLandmarkOptions,
-  instance: LandmarkInstance,
+  instance: ProceduralLandmarkInstance,
 ): void {
   const totalHeight = 50;
   if (!isPotentiallyVisible(options, instance, totalHeight, 53)) return;
@@ -869,7 +949,7 @@ function drawHarborCranes(
   context: LandmarkDrawContext,
   glow: LandmarkDrawContext,
   options: ProceduralLandmarkOptions,
-  instance: LandmarkInstance,
+  instance: ProceduralLandmarkInstance,
 ): void {
   const totalHeight = 59;
   if (!isPotentiallyVisible(options, instance, totalHeight, 76)) return;
@@ -1099,6 +1179,26 @@ function drawHarborCranes(
  * Draws recurring Tokyo landmarks in world-space order. The caller owns both
  * contexts and should clear/composite its glow layer around this call.
  */
+export function drawProceduralLandmark(
+  context: LandmarkDrawContext,
+  glow: LandmarkDrawContext,
+  options: ProceduralLandmarkOptions,
+  landmark: ProceduralLandmarkInstance,
+): void {
+  if (landmark.alpha <= 0.002) return;
+  if (landmark.kind === "tokyo-tower") {
+    drawTokyoTower(context, glow, options, landmark);
+  } else if (landmark.kind === "skytree") {
+    drawSkytree(context, glow, options, landmark);
+  } else if (landmark.kind === "rainbow-bridge") {
+    drawRainbowBridge(context, glow, options, landmark);
+  } else if (landmark.kind === "big-sight") {
+    drawBigSight(context, glow, options, landmark);
+  } else {
+    drawHarborCranes(context, glow, options, landmark);
+  }
+}
+
 export function drawProceduralLandmarks(
   context: LandmarkDrawContext,
   glow: LandmarkDrawContext,
@@ -1114,19 +1214,8 @@ export function drawProceduralLandmarks(
     return;
   }
 
-  const landmarks = collectLandmarks(options);
+  const landmarks = collectProceduralLandmarks(options);
   for (const landmark of landmarks) {
-    if (landmark.alpha <= 0.002) continue;
-    if (landmark.kind === "tokyo-tower") {
-      drawTokyoTower(context, glow, options, landmark);
-    } else if (landmark.kind === "skytree") {
-      drawSkytree(context, glow, options, landmark);
-    } else if (landmark.kind === "rainbow-bridge") {
-      drawRainbowBridge(context, glow, options, landmark);
-    } else if (landmark.kind === "big-sight") {
-      drawBigSight(context, glow, options, landmark);
-    } else {
-      drawHarborCranes(context, glow, options, landmark);
-    }
+    drawProceduralLandmark(context, glow, options, landmark);
   }
 }

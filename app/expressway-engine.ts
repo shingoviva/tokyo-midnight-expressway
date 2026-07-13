@@ -1,5 +1,10 @@
 import { createProceduralAssets } from "./procedural-assets";
-import { drawProceduralLandmarks } from "./procedural-landmarks";
+import {
+  collectProceduralLandmarks,
+  drawProceduralLandmark,
+  type ProceduralLandmarkInstance,
+  type ProceduralLandmarkOptions,
+} from "./procedural-landmarks";
 
 export type Telemetry = {
   speedKmh: number;
@@ -64,6 +69,10 @@ type SceneObject =
   | { kind: "overpass"; z: number; index: number; level: number }
   | { kind: "bollard"; z: number; index: number; side: -1 | 1 }
   | { kind: "vehicle"; z: number; vehicle: TrafficVehicle };
+
+type CityLayerItem =
+  | { kind: "building"; z: number; index: number; side: -1 | 1 }
+  | { kind: "landmark"; z: number; landmark: ProceduralLandmarkInstance };
 
 type AudioRig = {
   context: AudioContext;
@@ -325,6 +334,96 @@ export function createExpresswayEngine(
     });
   }
 
+  function transformGroundPattern(
+    pattern: CanvasPattern,
+    far: RoadPoint,
+    near: RoadPoint,
+    farCenter: number,
+    farY: number,
+    nearCenter: number,
+    nearY: number,
+    sourceWidth: number,
+    sourceHeight: number,
+    tileWidthMeters: number,
+    tileLengthMeters: number,
+  ): void {
+    const worldSpan = Math.max(0.001, far.world - near.world);
+    const imageSpan = Math.max(
+      0.001,
+      (worldSpan / tileLengthMeters) * sourceHeight,
+    );
+    const tileStart =
+      Math.floor(near.world / tileLengthMeters) * tileLengthMeters;
+    const startMix = (tileStart - near.world) / worldSpan;
+    const anchorCenter = lerp(nearCenter, farCenter, startMix);
+    const anchorY = lerp(nearY, farY, startMix);
+    const averageScale = (near.scale + far.scale) * 0.5;
+    const scaleX = (tileWidthMeters * averageScale) / sourceWidth;
+
+    pattern.setTransform({
+      a: scaleX,
+      b: 0,
+      c: (farCenter - nearCenter) / imageSpan,
+      d: (farY - nearY) / imageSpan,
+      e: anchorCenter - scaleX * sourceWidth * 0.5,
+      f: anchorY,
+    });
+  }
+
+  function transformWallPattern(
+    pattern: CanvasPattern,
+    far: RoadPoint,
+    near: RoadPoint,
+    side: -1 | 1,
+    sourceWidth: number,
+    sourceHeight: number,
+    wallHeightMeters: number,
+    tileLengthMeters: number,
+    tileHeightMeters: number,
+  ): void {
+    const lateral = side * (ROAD_HALF_WIDTH + 0.72);
+    const farX = far.center + lateral * far.scale;
+    const nearX = near.center + lateral * near.scale;
+    const worldSpan = Math.max(0.001, far.world - near.world);
+    const farTop = far.y - wallHeightMeters * far.scale;
+    const nearTop = near.y - wallHeightMeters * near.scale;
+    const xPerMeter = (farX - nearX) / worldSpan;
+    const yPerMeter = (farTop - nearTop) / worldSpan;
+    const tileStart =
+      Math.floor(near.world / tileLengthMeters) * tileLengthMeters;
+    const startOffset = tileStart - near.world;
+    const averageScale = (near.scale + far.scale) * 0.5;
+
+    pattern.setTransform({
+      a: (xPerMeter * tileLengthMeters) / sourceWidth,
+      b: (yPerMeter * tileLengthMeters) / sourceWidth,
+      c: 0,
+      d: (tileHeightMeters * averageScale) / sourceHeight,
+      e: nearX + xPerMeter * startOffset,
+      f: nearTop + yPerMeter * startOffset,
+    });
+  }
+
+  function transformObjectPattern(
+    pattern: CanvasPattern,
+    x: number,
+    y: number,
+    scale: number,
+    tileWidthMeters: number,
+    tileHeightMeters: number,
+    sourceWidth = 512,
+    sourceHeight = 512,
+  ): void {
+    pattern.setTransform({
+      a: (tileWidthMeters * scale) / sourceWidth,
+      b: 0,
+      c: 0,
+      d: (tileHeightMeters * scale) / sourceHeight,
+      e: x,
+      f: y,
+    });
+  }
+
   function configureContextTransforms(): void {
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     glowLayer.context.setTransform(
@@ -376,7 +475,7 @@ export function createExpresswayEngine(
     cssHeight = nextHeight;
     pixelRatio = nextRatio;
     glowRatio = quality === "MOBILE" ? 0.42 : 0.5;
-    roadSliceCount = quality === "MOBILE" ? 170 : quality === "BALANCED" ? 240 : 300;
+    roadSliceCount = quality === "MOBILE" ? 240 : quality === "BALANCED" ? 340 : 440;
     focalLength = cssHeight * (cssWidth < cssHeight ? 0.72 : 0.8);
     horizon = cssHeight * (cssWidth < cssHeight ? 0.46 : 0.62);
     lightTrailPositions.clear();
@@ -439,9 +538,7 @@ export function createExpresswayEngine(
     roadPoints.length = 0;
     for (let index = 0; index <= roadSliceCount; index += 1) {
       const t = index / roadSliceCount;
-      const z =
-        NEAR_DISTANCE +
-        (FAR_DISTANCE - NEAR_DISTANCE) * Math.pow(t, 1.34);
+      const z = NEAR_DISTANCE + (FAR_DISTANCE - NEAR_DISTANCE) * t ** 1.34;
       const projected = projectedAt(z);
       roadPoints.push({
         z,
@@ -552,6 +649,14 @@ export function createExpresswayEngine(
     if (concretePattern && facadeTextureVisibility > 0.001) {
       context.save();
       context.globalAlpha = atmosphericAlpha * facadeTextureVisibility;
+      transformObjectPattern(
+        concretePattern,
+        left,
+        top,
+        base.scale,
+        4,
+        4,
+      );
       context.fillStyle = concretePattern;
       context.fillRect(left, top, width, height + 2);
       context.restore();
@@ -654,10 +759,18 @@ export function createExpresswayEngine(
       const sign = advertisingSigns[
         positiveModulo(index, advertisingSigns.length)
       ];
-      const boardWidth = width * 0.74;
-      const boardHeight = boardWidth * (sign.heightMeters / sign.widthMeters);
-      const boardX = left + width * 0.16;
-      const boardY = top + height * 0.22;
+      const boardAspect = sign.heightMeters / sign.widthMeters;
+      const boardWidth = Math.min(
+        width * 0.74,
+        (height * 0.58) / boardAspect,
+      );
+      const boardHeight = boardWidth * boardAspect;
+      const boardX = left + (width - boardWidth) * 0.5;
+      const boardY = clamp(
+        top + height * 0.18,
+        top + 1,
+        base.groundY - boardHeight - Math.max(1, height * 0.06),
+      );
       const advertisingVisibility =
         smoothstep(0.6, 11, boardWidth) *
         smoothstep(1.2, 16, boardHeight) *
@@ -665,6 +778,9 @@ export function createExpresswayEngine(
       if (advertisingVisibility > 0.002) {
         context.save();
         context.globalAlpha = atmosphericAlpha * advertisingVisibility;
+        context.beginPath();
+        context.rect(left + 1, top + 1, Math.max(0, width - 2), Math.max(0, height - 2));
+        context.clip();
         context.drawImage(sign.canvas, boardX, boardY, boardWidth, boardHeight);
         context.restore();
         drawGlowDot(
@@ -687,14 +803,50 @@ export function createExpresswayEngine(
   }
 
   function drawCity(): void {
+    const landmarkOptions: ProceduralLandmarkOptions = {
+      totalDistanceMeters,
+      sceneLength: SCENE_LENGTH,
+      cssWidth,
+      cssHeight,
+      quality,
+      project: (z, lateral, objectHeight) =>
+        projectedAt(z, lateral, objectHeight),
+      glowDot: drawGlowDot,
+    };
+    const cityItems: CityLayerItem[] = collectProceduralLandmarks(
+      landmarkOptions,
+    ).map((landmark) => ({
+      kind: "landmark" as const,
+      z: landmark.z,
+      landmark,
+    }));
     const spacing = quality === "MOBILE" ? 48 : quality === "BALANCED" ? 38 : 32;
     const first = Math.floor((totalDistanceMeters - spacing) / spacing);
     const last = Math.ceil((totalDistanceMeters + CITY_FAR_DISTANCE + 90) / spacing);
     for (let index = last; index >= first; index -= 1) {
       const world = index * spacing + (seeded(index, 307) - 0.5) * spacing * 0.58;
       const z = world - totalDistanceMeters;
-      drawBuilding(index, -1, z);
-      drawBuilding(index, 1, z + (seeded(index, 311) - 0.5) * 14);
+      cityItems.push({ kind: "building", z, index, side: -1 });
+      cityItems.push({
+        kind: "building",
+        z: z + (seeded(index, 311) - 0.5) * 14,
+        index,
+        side: 1,
+      });
+    }
+
+    cityItems.sort((firstItem, secondItem) => secondItem.z - firstItem.z);
+    for (const item of cityItems) {
+      if (item.kind === "building") {
+        drawBuilding(item.index, item.side, item.z);
+      } else {
+        drawProceduralLandmark(
+          context,
+          glowLayer.context,
+          landmarkOptions,
+          item.landmark,
+        );
+      }
     }
   }
 
@@ -782,6 +934,19 @@ export function createExpresswayEngine(
     if (asphaltPattern && textureVisibility > 0.001) {
       context.save();
       context.globalAlpha = textureVisibility;
+      transformGroundPattern(
+        asphaltPattern,
+        far,
+        near,
+        far.center,
+        far.y,
+        near.center,
+        near.y,
+        512,
+        1024,
+        ROAD_HALF_WIDTH * 2,
+        ROAD_HALF_WIDTH * 4,
+      );
       context.fillStyle = asphaltPattern;
       fillPolygon(context, [
         [far.center - farRoad, far.y],
@@ -992,6 +1157,19 @@ export function createExpresswayEngine(
         if (metalPattern && deckTextureVisibility > 0.001) {
           context.save();
           context.globalAlpha = deckTextureVisibility;
+          transformGroundPattern(
+            metalPattern,
+            far,
+            near,
+            farCenter,
+            farY,
+            nearCenter,
+            nearY,
+            512,
+            512,
+            halfWidth * 2,
+            halfWidth * 2,
+          );
           context.fillStyle = metalPattern;
           fillPolygon(context, [
             [farCenter - farHalf, farY],
@@ -1193,6 +1371,14 @@ export function createExpresswayEngine(
         const portalTextureVisibility = 0.18 * farFade(object.z, 520, 860);
         if (concretePattern && portalTextureVisibility > 0.001) {
           context.globalAlpha = visibility * portalTextureVisibility;
+          transformObjectPattern(
+            concretePattern,
+            base.x - portalHalf,
+            base.groundY - portalHeight * 1.2,
+            base.scale,
+            4,
+            4,
+          );
           context.strokeStyle = concretePattern;
           context.stroke();
         }
@@ -1226,6 +1412,14 @@ export function createExpresswayEngine(
     const overpassTextureVisibility = 0.16 * farFade(object.z, 560, 920);
     if (metalPattern && overpassTextureVisibility > 0.001) {
       context.globalAlpha = fogAlpha * overpassTextureVisibility;
+      metalPattern.setTransform({
+        a: (8 * base.scale) / 512,
+        b: 0,
+        c: 0,
+        d: thickness / 512,
+        e: base.x - deckHalfWidth,
+        f: deckY,
+      });
       context.fillStyle = metalPattern;
       context.fillRect(base.x - deckHalfWidth, deckY, deckHalfWidth * 2, thickness);
       context.globalAlpha = fogAlpha;
@@ -1348,7 +1542,7 @@ export function createExpresswayEngine(
     if (base.x + width < -12 || base.x - width > cssWidth + 12) return;
     const visibility =
       farFade(object.z, FAR_DISTANCE * 0.63, FAR_DISTANCE * 0.96) *
-      smoothstep(NEAR_DISTANCE, 8.5, object.z);
+      smoothstep(6, 14, object.z);
     if (visibility <= 0.002) return;
 
     if (width < 1.25) {
@@ -1548,6 +1742,18 @@ export function createExpresswayEngine(
     const textureVisibility = farFade(near.z, 600, 920) * 0.27;
     if (texture && textureVisibility > 0.001) {
       context.globalAlpha = visibility * textureVisibility;
+      const isSoundwallTexture = texture === soundwallPattern;
+      transformWallPattern(
+        texture,
+        far,
+        near,
+        side,
+        512,
+        512,
+        wallHeight,
+        isSoundwallTexture ? 8.4 : 4,
+        isSoundwallTexture ? wallHeight : 1.8,
+      );
       context.fillStyle = texture;
       fillPolygon(context, [
         [farX, far.y],
@@ -1831,16 +2037,6 @@ export function createExpresswayEngine(
     drawSky();
     buildRoadPoints();
     drawCity();
-    drawProceduralLandmarks(context, glowLayer.context, {
-      totalDistanceMeters,
-      sceneLength: SCENE_LENGTH,
-      cssWidth,
-      cssHeight,
-      quality,
-      project: (z, lateral, objectHeight) =>
-        projectedAt(z, lateral, objectHeight),
-      glowDot: drawGlowDot,
-    });
     drawElevatedDecks();
     collectSceneObjects();
     drawDepthScene();
