@@ -71,6 +71,8 @@ export type ProceduralLandmarkSite = Readonly<{
 
 const TAU = Math.PI * 2;
 const LANDMARK_NEAR_CLIP = 0.12;
+const RAINBOW_BRIDGE_NEAR_APPROACH = -174;
+const RAINBOW_BRIDGE_FAR_APPROACH = 744;
 
 const LANDMARK_SPECS: readonly LandmarkSpec[] = [
   {
@@ -280,7 +282,7 @@ function metricHeight(
     }
     return 450 + ((designHeight - 144) / 72) * 184;
   }
-  if (kind === "rainbow-bridge") return (designHeight / 58) * 126;
+  if (kind === "rainbow-bridge") return (designHeight / 58) * 127;
   if (kind === "big-sight") return (designHeight / 50) * 58;
   // Tokyo Port's container cranes are roughly 58-65m tall.
   return (designHeight / 59) * 62;
@@ -360,9 +362,9 @@ export function collectProceduralLandmarks(
   for (const spec of LANDMARK_SPECS) {
     const anchor = sceneLength * spec.phase;
     // A longitudinal bridge remains visible after its near tower passes the
-    // camera because most of the 798 m structure is still ahead.
+    // camera because most of the 918 m suspension structure is still ahead.
     const minimumZ = spec.kind === "rainbow-bridge"
-      ? -693 + LANDMARK_NEAR_CLIP
+      ? -RAINBOW_BRIDGE_FAR_APPROACH + LANDMARK_NEAR_CLIP
       : LANDMARK_NEAR_CLIP;
     const firstBlock = Math.floor(
       (options.totalDistanceMeters + minimumZ - anchor) / sceneLength,
@@ -789,12 +791,12 @@ function drawRainbowBridge(
   const fineAlpha = smoothstep(60, 142, heightPixels);
   const landmarkAlpha = context.globalAlpha * instance.alpha;
   const glowAlpha = glow.globalAlpha * instance.alpha;
-  // The anchor is the near main tower. A 105m approach, 570m main span and
-  // 123m far approach reproduce the bridge's representative 798m length.
-  const farOffset = 693;
+  // The anchor is the near main tower. The two approaches and 570m center
+  // span reproduce the Port of Tokyo's 918m suspension-bridge section.
+  const farOffset = RAINBOW_BRIDGE_FAR_APPROACH;
   const nearOffset = Math.min(
     farOffset,
-    Math.max(-105, LANDMARK_NEAR_CLIP - instance.z),
+    Math.max(RAINBOW_BRIDGE_NEAR_APPROACH, LANDMARK_NEAR_CLIP - instance.z),
   );
   const towerOffsets = [0, 570] as const;
   const deckTop = 2.25;
