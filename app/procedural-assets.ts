@@ -430,10 +430,88 @@ function definitions(): SignDefinition[] {
     { family: "green-central-loop", widthMeters: 8.6, heightMeters: 3.1, palette: GREEN, render: routeSign("神田橋", "Kandabashi / Ginza", "C1", "up") },
     { family: "green-central-loop-left", widthMeters: 8.8, heightMeters: 3.1, palette: GREEN, render: routeSign("北池袋・新宿", "Kita-ikebukuro / Shinjuku", "5", "left") },
     { family: "green-bayshore", widthMeters: 8.8, heightMeters: 3.1, palette: GREEN, render: routeSign("湾岸線・羽田", "Bayshore Route / Haneda", "B", "right") },
-    { family: "green-exit", widthMeters: 10.2, heightMeters: 2.8, palette: GREEN, render: (c, w, h) => { c.fillStyle = "#1467aa"; c.fillRect(w * .025, h * .04, w * .25, h * .92); text(c, "神保町", w * .145, h * .22, w * .21, h * .19, "#fff", 800); text(c, "Jinbocho", w * .145, h * .39, w * .21, h * .1, "#fff", 650); text(c, "飯田橋", w * .145, h * .62, w * .21, h * .19, "#fff", 800); text(c, "Iidabashi", w * .145, h * .79, w * .21, h * .1, "#fff", 650); text(c, "西神田", w * .53, h * .27, w * .42, h * .27, "#fff", 800); text(c, "Nishi-kanda", w * .53, h * .49, w * .42, h * .12, "#fff", 650); exitNumberBox(c, w * .34, h * .66, w * .28, h * .19, "出口 501"); text(c, "400m", w * .72, h * .77, w * .18, h * .17, "#fff", 750); arrow(c, w * .86, h * .56, h * .48, "right", "#fff"); } },
+    {
+      family: "green-exit",
+      widthMeters: 11.2,
+      heightMeters: 3.2,
+      palette: GREEN,
+      render: (c, w, h) => {
+        c.fillStyle = "#1467aa";
+        c.fillRect(w * .025, h * .045, w * .255, h * .91);
+        c.strokeStyle = "rgba(255,255,255,.88)";
+        c.lineWidth = Math.max(3, h * .014);
+        c.beginPath();
+        c.moveTo(w * .28, h * .07);
+        c.lineTo(w * .28, h * .93);
+        c.stroke();
+        text(c, "神保町", w * .152, h * .22, w * .205, h * .18, "#fff", 800);
+        text(c, "Jinbocho", w * .152, h * .39, w * .205, h * .095, "#fff", 650);
+        text(c, "飯田橋", w * .152, h * .61, w * .205, h * .18, "#fff", 800);
+        text(c, "Iidabashi", w * .152, h * .78, w * .205, h * .095, "#fff", 650);
+        text(c, "西神田", w * .51, h * .235, w * .39, h * .23, "#fff", 800);
+        text(c, "Nishi-kanda", w * .51, h * .45, w * .4, h * .105, "#fff", 650);
+        exitNumberBox(c, w * .325, h * .68, w * .285, h * .2, "出口 501");
+        text(c, "400m", w * .72, h * .79, w * .16, h * .145, "#fff", 750);
+        arrow(c, w * .87, h * .55, h * .41, "right", "#fff");
+      },
+    },
     { family: "green-junction", widthMeters: 9.4, heightMeters: 3.1, palette: GREEN, render: routeSign("箱崎 JCT", "Hakozaki Junction", "6", "right") },
-    { family: "green-double-panel", widthMeters: 12.4, heightMeters: 3.2, palette: GREEN, render: (c, w, h) => { c.strokeStyle = "rgba(255,255,255,.82)"; c.lineWidth = 4; c.beginPath(); c.moveTo(w / 2, 18); c.lineTo(w / 2, h - 18); c.stroke(); routeMark(c, w * .1, h * .27, h * .32, "5"); routeMark(c, w * .59, h * .27, h * .32, "C1"); text(c, "北池袋", w * .3, h * .25, w * .3, h * .21, "#fff", 800); text(c, "Kita-ikebukuro", w * .3, h * .47, w * .32, h * .1, "#fff", 650); text(c, "神田橋・箱崎", w * .77, h * .25, w * .31, h * .2, "#fff", 800); text(c, "Kandabashi / Hakozaki", w * .77, h * .48, w * .34, h * .085, "#fff", 650); arrow(c, w * .4, h * .76, h * .34, "left", "#ed4b4b"); arrow(c, w * .9, h * .76, h * .34, "up", "#2ea7f2"); text(c, "500m", w * .5, h * .87, w * .15, h * .1, "#fff", 700); } },
-    { family: "green-next-exit", widthMeters: 10.2, heightMeters: 2.8, palette: GREEN, render: (c, w, h) => { c.fillStyle = "#1467aa"; c.fillRect(w * .025, h * .04, w * .27, h * .92); text(c, "霞が関", w * .16, h * .29, w * .23, h * .21, "#fff", 800); text(c, "Kasumigaseki", w * .16, h * .5, w * .24, h * .1, "#fff", 650); text(c, "銀座", w * .51, h * .27, w * .3, h * .26, "#fff", 800); text(c, "Ginza", w * .51, h * .49, w * .3, h * .12, "#fff", 650); exitNumberBox(c, w * .37, h * .68, w * .28, h * .18, "出口 15"); text(c, "次は  Next", w * .81, h * .23, w * .26, h * .14, "#fff", 700); text(c, "芝公園", w * .81, h * .48, w * .25, h * .2, "#fff", 800); text(c, "Shibakoen", w * .81, h * .69, w * .25, h * .1, "#fff", 650); } },
+    {
+      family: "green-double-panel",
+      widthMeters: 13,
+      heightMeters: 3.3,
+      palette: GREEN,
+      render: (c, w, h) => {
+        c.strokeStyle = "rgba(255,255,255,.84)";
+        c.lineWidth = Math.max(3, h * .015);
+        c.beginPath();
+        c.moveTo(w * .5, h * .06);
+        c.lineTo(w * .5, h * .76);
+        c.stroke();
+        routeMark(c, w * .105, h * .26, h * .3, "5");
+        routeMark(c, w * .595, h * .26, h * .3, "C1");
+        text(c, "北池袋", w * .305, h * .235, w * .315, h * .19, "#fff", 800);
+        text(c, "Kita-ikebukuro", w * .305, h * .445, w * .32, h * .095, "#fff", 650);
+        text(c, "神田橋・箱崎", w * .795, h * .235, w * .32, h * .185, "#fff", 800);
+        text(c, "Kandabashi / Hakozaki", w * .795, h * .445, w * .34, h * .082, "#fff", 650);
+        arrow(c, w * .305, h * .72, h * .31, "left", "#fff");
+        arrow(c, w * .795, h * .72, h * .31, "up", "#fff");
+        roundedRect(c, w * .438, h * .79, w * .124, h * .15, h * .025);
+        c.fillStyle = "#168944";
+        c.fill();
+        c.strokeStyle = "rgba(255,255,255,.86)";
+        c.lineWidth = Math.max(2, h * .01);
+        c.stroke();
+        text(c, "500m", w * .5, h * .865, w * .105, h * .087, "#fff", 700);
+      },
+    },
+    {
+      family: "green-next-exit",
+      widthMeters: 11.4,
+      heightMeters: 3.2,
+      palette: GREEN,
+      render: (c, w, h) => {
+        c.fillStyle = "#1467aa";
+        c.fillRect(w * .025, h * .045, w * .255, h * .91);
+        c.strokeStyle = "rgba(255,255,255,.86)";
+        c.lineWidth = Math.max(3, h * .014);
+        c.beginPath();
+        c.moveTo(w * .28, h * .07);
+        c.lineTo(w * .28, h * .93);
+        c.moveTo(w * .68, h * .07);
+        c.lineTo(w * .68, h * .93);
+        c.stroke();
+        text(c, "霞が関", w * .152, h * .31, w * .205, h * .2, "#fff", 800);
+        text(c, "Kasumigaseki", w * .152, h * .53, w * .21, h * .095, "#fff", 650);
+        text(c, "銀座", w * .48, h * .25, w * .3, h * .225, "#fff", 800);
+        text(c, "Ginza", w * .48, h * .47, w * .3, h * .105, "#fff", 650);
+        exitNumberBox(c, w * .345, h * .69, w * .27, h * .19, "出口 15");
+        text(c, "次は", w * .825, h * .17, w * .22, h * .12, "#fff", 700);
+        text(c, "NEXT EXIT", w * .825, h * .315, w * .22, h * .085, "#eaffef", 700);
+        text(c, "芝公園", w * .825, h * .54, w * .23, h * .18, "#fff", 800);
+        text(c, "Shibakoen", w * .825, h * .735, w * .23, h * .092, "#fff", 650);
+      },
+    },
     { family: "blue-parking", widthMeters: 4, heightMeters: 2, palette: BLUE, render: (c, w, h) => { badge(c, h * .48, h * .5, h * .62, "P", "#0968a4"); text(c, "芝浦 PA", w * .66, h * .36, w * .53, h * .25, "#fff"); text(c, "SHIBAURA  1 km", w * .66, h * .68, w * .54, h * .12, "#fff", 600); } },
     { family: "led-roadwork", widthMeters: 8, heightMeters: 2, palette: LED, render: (c, w, h) => { c.shadowColor = "#ff6b12"; c.shadowBlur = 22; text(c, "この先 工事", w * .5, h * .34, w * .84, h * .28, "#ff9b26", 800); text(c, "ROAD WORK  1 km", w * .5, h * .72, w * .82, h * .15, "#ffbd57", 700); c.shadowBlur = 0; } },
     { family: "led-congestion", widthMeters: 8, heightMeters: 2, palette: LED, render: (c, w, h) => { c.shadowColor = "#ff5419"; c.shadowBlur = 20; text(c, "渋滞  3 km", w * .5, h * .34, w * .82, h * .28, "#ff8c24", 800); text(c, "CONGESTION  20 MIN", w * .5, h * .72, w * .82, h * .15, "#ffc15c", 700); c.shadowBlur = 0; } },
@@ -443,6 +521,129 @@ function definitions(): SignDefinition[] {
     { family: "advertising-vertical-magenta", widthMeters: 3, heightMeters: 6, palette: { background: "#6c194f", edge: "#ffd3ee", foreground: "#fff", glow: "#ff5bc3" }, render: (c, w, h) => { text(c, "MIDNIGHT", w * .5, h * .21, w * .82, h * .075, "#fff", 800); text(c, "SIGNAL", w * .5, h * .34, w * .82, h * .1, "#ffbce9", 800); c.fillStyle = "rgba(255,180,227,.7)"; for (let i = 0; i < 6; i += 1) c.fillRect(w * (.18 + i * .11), h * (.5 + (i % 2) * .04), w * .035, h * .24); text(c, "URBAN FREQUENCY", w * .5, h * .86, w * .8, h * .052, "#fff", 650); } },
     { family: "advertising-blue-white", widthMeters: 8, heightMeters: 3, palette: { background: "#e8f5fa", edge: "#75bcdd", foreground: "#065f91", glow: "#55c8ff" }, render: (c, w, h) => { text(c, "BAY GLASS", w * .5, h * .34, w * .82, h * .25, "#096a9e", 800); c.fillStyle = "#3db7d4"; c.fillRect(w * .13, h * .55, w * .74, h * .045); text(c, "COASTAL LIGHT / TOKYO", w * .5, h * .73, w * .8, h * .1, "#174d6a", 650); } },
     { family: "advertising-cyan-horizontal", widthMeters: 8, heightMeters: 3, palette: { background: "#0c607d", edge: "#bbf1ff", foreground: "#fff", glow: "#4ed9ff" }, render: (c, w, h) => { text(c, "AETHER CITY", w * .5, h * .33, w * .84, h * .23, "#ddfaff", 800); text(c, "NEW TOKYO  2036", w * .5, h * .64, w * .8, h * .13, "#75e7ff", 700); text(c, "MOVE BEYOND", w * .5, h * .82, w * .72, h * .08, "#fff", 600); } },
+    {
+      family: "advertising-amber-transit",
+      widthMeters: 10.4,
+      heightMeters: 3.4,
+      palette: { background: "#c64f16", edge: "#ffe0ac", foreground: "#fff", glow: "#ff9b42" },
+      render: (c, w, h) => {
+        c.fillStyle = "rgba(255,221,163,.28)";
+        c.fillRect(w * .055, h * .12, w * .03, h * .76);
+        c.fillRect(w * .105, h * .12, w * .012, h * .76);
+        text(c, "NIGHT TRANSIT", w * .56, h * .38, w * .77, h * .27, "#fff7e9", 850);
+        text(c, "TOKYO / ALL HOURS", w * .56, h * .71, w * .7, h * .115, "#ffd8a4", 700);
+      },
+    },
+    {
+      family: "advertising-red-kinetic",
+      widthMeters: 9.4,
+      heightMeters: 3.2,
+      palette: { background: "#8e1930", edge: "#ffd0d8", foreground: "#fff", glow: "#ff526d" },
+      render: (c, w, h) => {
+        c.strokeStyle = "rgba(255,191,202,.6)";
+        c.lineWidth = h * .035;
+        c.beginPath();
+        c.moveTo(w * .08, h * .77);
+        c.lineTo(w * .19, h * .23);
+        c.lineTo(w * .29, h * .77);
+        c.stroke();
+        text(c, "KINETIC CITY", w * .62, h * .38, w * .66, h * .255, "#fff", 850);
+        text(c, "DRIVE THE SIGNAL", w * .62, h * .7, w * .62, h * .11, "#ffc3cf", 700);
+      },
+    },
+    {
+      family: "advertising-indigo-weather",
+      widthMeters: 3.8,
+      heightMeters: 7.2,
+      palette: { background: "#282778", edge: "#c7d7ff", foreground: "#fff", glow: "#768dff" },
+      render: (c, w, h) => {
+        text(c, "NEON", w * .5, h * .19, w * .8, h * .12, "#fff", 850);
+        text(c, "WEATHER", w * .5, h * .33, w * .82, h * .105, "#c6d5ff", 850);
+        c.strokeStyle = "rgba(166,194,255,.72)";
+        c.lineWidth = w * .035;
+        c.beginPath();
+        c.arc(w * .5, h * .58, w * .23, Math.PI * .15, Math.PI * 1.85);
+        c.stroke();
+        text(c, "TOKYO BAY", w * .5, h * .84, w * .8, h * .065, "#fff", 700);
+      },
+    },
+    {
+      family: "advertising-monochrome-standard",
+      widthMeters: 10.2,
+      heightMeters: 4,
+      palette: { background: "#e9e5d9", edge: "#ffffff", foreground: "#10151a", glow: "#d9e5e8" },
+      render: (c, w, h) => {
+        c.fillStyle = "#11161c";
+        c.fillRect(w * .055, h * .12, w * .18, h * .76);
+        text(c, "M", w * .145, h * .5, w * .12, h * .34, "#f4efe3", 900);
+        text(c, "MIDNIGHT STANDARD", w * .61, h * .39, w * .68, h * .215, "#11161c", 850);
+        c.fillStyle = "#11161c";
+        c.fillRect(w * .3, h * .59, w * .62, h * .025);
+        text(c, "URBAN EQUIPMENT", w * .61, h * .75, w * .63, h * .095, "#29323a", 700);
+      },
+    },
+    {
+      family: "advertising-lime-electric",
+      widthMeters: 9.2,
+      heightMeters: 3.2,
+      palette: { background: "#b9dc31", edge: "#efffb3", foreground: "#10200f", glow: "#cfff4d" },
+      render: (c, w, h) => {
+        c.fillStyle = "#162315";
+        c.fillRect(w * .04, h * .08, w * .17, h * .84);
+        text(c, "E", w * .125, h * .5, w * .11, h * .39, "#dfff67", 900);
+        text(c, "ELECTRIC AVENUE", w * .6, h * .38, w * .69, h * .245, "#122010", 900);
+        text(c, "ZERO EMISSION", w * .6, h * .7, w * .6, h * .115, "#263a19", 750);
+      },
+    },
+    {
+      family: "advertising-orange-radio",
+      widthMeters: 3.6,
+      heightMeters: 6.8,
+      palette: { background: "#d95716", edge: "#ffe0a8", foreground: "#fff", glow: "#ff9639" },
+      render: (c, w, h) => {
+        text(c, "CITY", w * .5, h * .18, w * .78, h * .12, "#fff9ed", 900);
+        text(c, "RADIO", w * .5, h * .32, w * .8, h * .115, "#fff9ed", 900);
+        c.fillStyle = "rgba(75,27,12,.88)";
+        roundedRect(c, w * .14, h * .48, w * .72, h * .18, w * .05);
+        c.fill();
+        text(c, "94.7 FM", w * .5, h * .57, w * .61, h * .085, "#ffd070", 850);
+        text(c, "LIVE TOKYO", w * .5, h * .83, w * .76, h * .065, "#fff", 700);
+      },
+    },
+    {
+      family: "advertising-violet-orbit",
+      widthMeters: 9.6,
+      heightMeters: 3.4,
+      palette: { background: "#4b2b80", edge: "#e2d1ff", foreground: "#fff", glow: "#b37aff" },
+      render: (c, w, h) => {
+        c.strokeStyle = "rgba(232,213,255,.72)";
+        c.lineWidth = h * .025;
+        c.beginPath();
+        c.arc(w * .14, h * .5, h * .25, 0, Math.PI * 2);
+        c.stroke();
+        text(c, "ORBIT HOTEL", w * .59, h * .39, w * .69, h * .26, "#fff", 850);
+        text(c, "NIGHT CHECK-IN", w * .59, h * .71, w * .62, h * .11, "#d9bfff", 700);
+      },
+    },
+    {
+      family: "advertising-white-mobility",
+      widthMeters: 10.8,
+      heightMeters: 3.5,
+      palette: { background: "#eef4f2", edge: "#ffffff", foreground: "#102a32", glow: "#9ff7ef" },
+      render: (c, w, h) => {
+        c.fillStyle = "#0f8a88";
+        c.fillRect(w * .05, h * .1, w * .2, h * .8);
+        c.fillStyle = "#b5fff0";
+        c.beginPath();
+        c.moveTo(w * .1, h * .7);
+        c.lineTo(w * .2, h * .3);
+        c.lineTo(w * .2, h * .7);
+        c.closePath();
+        c.fill();
+        text(c, "TOKYO MOTION", w * .62, h * .39, w * .66, h * .245, "#15313a", 900);
+        text(c, "AFTER DARK", w * .62, h * .7, w * .54, h * .115, "#167878", 750);
+      },
+    },
   ];
 }
 

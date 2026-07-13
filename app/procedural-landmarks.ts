@@ -36,6 +36,11 @@ type ScreenPoint = Readonly<{ x: number; y: number }>;
 export type ProceduralLandmarkKind =
   | "tokyo-tower"
   | "skytree"
+  | "tokyo-metropolitan-government"
+  | "toranomon-hills"
+  | "shibuya-scramble-square"
+  | "cocoon-tower"
+  | "fuji-television"
   | "rainbow-bridge"
   | "big-sight"
   | "harbor-cranes";
@@ -46,6 +51,8 @@ type LandmarkSpec = Readonly<{
   lateral: number;
   salt: number;
   maximumDistance: number;
+  recurrenceEvery: 3 | 4;
+  recurrenceOffset: number;
 }>;
 
 type LandmarkMetricProfile = Readonly<{
@@ -76,53 +83,94 @@ const RAINBOW_BRIDGE_FAR_APPROACH = 744;
 
 const LANDMARK_SPECS: readonly LandmarkSpec[] = [
   {
-    kind: "skytree",
-    phase: 0.055,
-    lateral: 132,
-    salt: 173,
-    maximumDistance: 2600,
+    kind: "tokyo-metropolitan-government",
+    phase: 0.115,
+    lateral: 118,
+    salt: 139,
+    maximumDistance: 22000,
+    recurrenceEvery: 3,
+    recurrenceOffset: 2,
+  },
+  {
+    kind: "cocoon-tower",
+    phase: 0.19,
+    lateral: 92,
+    salt: 157,
+    maximumDistance: 30000,
+    recurrenceEvery: 4,
+    recurrenceOffset: 0,
   },
   {
     kind: "skytree",
     phase: 0.25,
-    lateral: 104,
+    lateral: 122,
     salt: 211,
-    maximumDistance: 1900,
+    maximumDistance: 30000,
+    recurrenceEvery: 4,
+    recurrenceOffset: 2,
   },
   {
-    kind: "rainbow-bridge",
-    phase: 0.679,
-    lateral: 10,
-    salt: 307,
-    maximumDistance: 1800,
+    kind: "tokyo-tower",
+    phase: 0.321,
+    lateral: 88,
+    salt: 617,
+    maximumDistance: 30000,
+    recurrenceEvery: 4,
+    recurrenceOffset: 0,
+  },
+  {
+    kind: "toranomon-hills",
+    phase: 0.495,
+    lateral: 96,
+    salt: 271,
+    maximumDistance: 22000,
+    recurrenceEvery: 3,
+    recurrenceOffset: 0,
   },
   {
     kind: "big-sight",
     phase: 0.604,
     lateral: 94,
     salt: 419,
-    maximumDistance: 1500,
+    maximumDistance: 12000,
+    recurrenceEvery: 3,
+    recurrenceOffset: 0,
+  },
+  {
+    kind: "rainbow-bridge",
+    phase: 0.679,
+    lateral: 10,
+    salt: 307,
+    maximumDistance: 12000,
+    recurrenceEvery: 4,
+    recurrenceOffset: 1,
   },
   {
     kind: "harbor-cranes",
     phase: 0.75,
     lateral: 180,
     salt: 503,
-    maximumDistance: 1800,
+    maximumDistance: 12000,
+    recurrenceEvery: 3,
+    recurrenceOffset: 1,
   },
   {
-    kind: "tokyo-tower",
-    phase: 0.321,
-    lateral: 78,
-    salt: 617,
-    maximumDistance: 2400,
+    kind: "shibuya-scramble-square",
+    phase: 0.89,
+    lateral: 84,
+    salt: 557,
+    maximumDistance: 22000,
+    recurrenceEvery: 3,
+    recurrenceOffset: 1,
   },
   {
-    kind: "tokyo-tower",
-    phase: 0.91,
-    lateral: 116,
+    kind: "fuji-television",
+    phase: 0.965,
+    lateral: 160,
     salt: 683,
-    maximumDistance: 2600,
+    maximumDistance: 18000,
+    recurrenceEvery: 4,
+    recurrenceOffset: 3,
   },
 ] as const;
 
@@ -142,6 +190,31 @@ const LANDMARK_METRIC_PROFILES: Readonly<
     widthScale: 68 / 38,
     depthScale: 1,
     lineScale: 1.75,
+  },
+  "tokyo-metropolitan-government": {
+    widthScale: 1,
+    depthScale: 1,
+    lineScale: 1.2,
+  },
+  "toranomon-hills": {
+    widthScale: 1,
+    depthScale: 1,
+    lineScale: 1.15,
+  },
+  "shibuya-scramble-square": {
+    widthScale: 1,
+    depthScale: 1,
+    lineScale: 1.16,
+  },
+  "cocoon-tower": {
+    widthScale: 1,
+    depthScale: 1,
+    lineScale: 1.12,
+  },
+  "fuji-television": {
+    widthScale: 1,
+    depthScale: 1,
+    lineScale: 1.08,
   },
   "rainbow-bridge": {
     // The modeled deck becomes roughly 29 meters wide.
@@ -186,6 +259,16 @@ function seeded(index: number, salt = 0): number {
   return hashInteger(Math.imul(index, 0x1f123bb5) + salt) / 4294967295;
 }
 
+function positiveModulo(value: number, divisor: number): number {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function landmarkOccursInBlock(spec: LandmarkSpec, block: number): boolean {
+  return (
+    positiveModulo(block, spec.recurrenceEvery) === spec.recurrenceOffset
+  );
+}
+
 function landmarkSite(
   spec: LandmarkSpec,
   block: number,
@@ -223,6 +306,7 @@ export function collectProceduralLandmarkSites(
     const firstBlock = Math.floor((minimumWorld - anchor) / sceneLength) - 1;
     const lastBlock = Math.ceil((maximumWorld - anchor) / sceneLength) + 1;
     for (let block = firstBlock; block <= lastBlock; block += 1) {
+      if (!landmarkOccursInBlock(spec, block)) continue;
       const site = landmarkSite(spec, block, sceneLength);
       if (site.world < minimumWorld || site.world > maximumWorld) continue;
       sites.push(site);
@@ -262,6 +346,23 @@ function strokePolyline(
   context.stroke();
 }
 
+function projectedRectangle(
+  options: ProceduralLandmarkOptions,
+  instance: ProceduralLandmarkInstance,
+  left: number,
+  right: number,
+  bottom: number,
+  top: number,
+  zOffset = 0,
+): ScreenPoint[] {
+  return [
+    projectedPoint(options, instance, left, bottom, zOffset),
+    projectedPoint(options, instance, left, top, zOffset),
+    projectedPoint(options, instance, right, top, zOffset),
+    projectedPoint(options, instance, right, bottom, zOffset),
+  ];
+}
+
 function metricHeight(
   kind: ProceduralLandmarkKind,
   designHeight: number,
@@ -284,8 +385,12 @@ function metricHeight(
   }
   if (kind === "rainbow-bridge") return (designHeight / 58) * 127;
   if (kind === "big-sight") return (designHeight / 50) * 58;
-  // Tokyo Port's container cranes are roughly 58-65m tall.
-  return (designHeight / 59) * 62;
+  if (kind === "harbor-cranes") {
+    // Tokyo Port's container cranes are roughly 58-65m tall.
+    return (designHeight / 59) * 62;
+  }
+  // New tower geometry is authored directly in real-world meters.
+  return designHeight;
 }
 
 function projectedScaleAt(
@@ -347,10 +452,13 @@ function detailLevel(
   return mobile;
 }
 
-function landmarkVisibility(z: number, maximumDistance: number): number {
-  const farFade = 1 - smoothstep(maximumDistance - 310, maximumDistance, z);
-  const atmosphere = lerp(0.68, 1, 1 - clamp(z / maximumDistance, 0, 1));
-  return farFade * atmosphere;
+function landmarkLightRetention(z: number, maximumDistance: number): number {
+  const dimmingStart = Math.min(5200, maximumDistance * 0.3);
+  return lerp(
+    0.02,
+    1,
+    1 - smoothstep(dimmingStart, maximumDistance, Math.max(0, z)),
+  );
 }
 
 export function collectProceduralLandmarks(
@@ -374,6 +482,7 @@ export function collectProceduralLandmarks(
     );
 
     for (let block = firstBlock; block <= lastBlock; block += 1) {
+      if (!landmarkOccursInBlock(spec, block)) continue;
       const site = landmarkSite(spec, block, sceneLength);
       const z = site.world - options.totalDistanceMeters;
       if (z <= minimumZ || z >= spec.maximumDistance) continue;
@@ -382,7 +491,9 @@ export function collectProceduralLandmarks(
         z,
         lateral: site.lateral,
         block,
-        alpha: landmarkVisibility(z, spec.maximumDistance),
+        // `alpha` controls emitted light and distance toning, not the opacity
+        // of the architectural mass. Landmark bodies remain solid silhouettes.
+        alpha: landmarkLightRetention(z, spec.maximumDistance),
       });
     }
   }
@@ -433,7 +544,7 @@ function drawTokyoTower(
   const heightPixels = projectedHeight(options, instance, totalHeight);
   const detailAlpha = smoothstep(34, 108, heightPixels);
   const fineAlpha = smoothstep(76, 190, heightPixels);
-  const landmarkAlpha = context.globalAlpha * instance.alpha;
+  const landmarkAlpha = context.globalAlpha;
   const glowAlpha = glow.globalAlpha * instance.alpha;
 
   context.save();
@@ -622,7 +733,7 @@ function drawSkytree(
   const heightPixels = projectedHeight(options, instance, totalHeight);
   const detailAlpha = smoothstep(42, 124, heightPixels);
   const fineAlpha = smoothstep(88, 210, heightPixels);
-  const landmarkAlpha = context.globalAlpha * instance.alpha;
+  const landmarkAlpha = context.globalAlpha;
   const glowAlpha = glow.globalAlpha * instance.alpha;
 
   const halfWidthAt = (height: number): number => {
@@ -789,14 +900,15 @@ function drawRainbowBridge(
   const heightPixels = projectedHeight(options, instance, totalHeight);
   const detailAlpha = smoothstep(28, 82, heightPixels);
   const fineAlpha = smoothstep(60, 142, heightPixels);
-  const landmarkAlpha = context.globalAlpha * instance.alpha;
+  const landmarkAlpha = context.globalAlpha;
   const glowAlpha = glow.globalAlpha * instance.alpha;
   // The anchor is the near main tower. The two approaches and 570m center
   // span reproduce the Port of Tokyo's 918m suspension-bridge section.
+  const nearApproach = RAINBOW_BRIDGE_NEAR_APPROACH;
   const farOffset = RAINBOW_BRIDGE_FAR_APPROACH;
   const nearOffset = Math.min(
     farOffset,
-    Math.max(RAINBOW_BRIDGE_NEAR_APPROACH, LANDMARK_NEAR_CLIP - instance.z),
+    Math.max(nearApproach, LANDMARK_NEAR_CLIP - instance.z),
   );
   const towerOffsets = [0, 570] as const;
   const deckTop = 2.25;
@@ -829,6 +941,45 @@ function drawRainbowBridge(
       projectedPoint(options, instance, side * deckHalfWidth, deckTop, nearOffset),
     ]);
   }
+
+  const drawAnchorage = (zOffset: number, pointsTowardBridge: 1 | -1): void => {
+    if (instance.z + zOffset <= LANDMARK_NEAR_CLIP) return;
+    const blockHeight = 5.2;
+    const blockHalfWidth = 2.15;
+    const blockLength = 13;
+    const rearOffset = zOffset + pointsTowardBridge * blockLength;
+    const anchorageScale = projectedScaleAt(options, instance, zOffset);
+    for (const side of [-1, 1] as const) {
+      const center = side * (deckHalfWidth + 2.65);
+      const left = center - blockHalfWidth;
+      const right = center + blockHalfWidth;
+      context.fillStyle = "rgba(128, 145, 151, 0.98)";
+      fillPolygon(context, [
+        projectedPoint(options, instance, left, 0, zOffset),
+        projectedPoint(options, instance, left, blockHeight, zOffset),
+        projectedPoint(options, instance, right, blockHeight, zOffset),
+        projectedPoint(options, instance, right, 0, zOffset),
+      ]);
+      context.fillStyle = "rgba(177, 193, 197, 0.96)";
+      fillPolygon(context, [
+        projectedPoint(options, instance, left, blockHeight, zOffset),
+        projectedPoint(options, instance, left, blockHeight, rearOffset),
+        projectedPoint(options, instance, right, blockHeight, rearOffset),
+        projectedPoint(options, instance, right, blockHeight, zOffset),
+      ]);
+      context.strokeStyle = "rgba(222, 235, 237, 0.72)";
+      context.lineWidth = clamp(anchorageScale * 0.16, 0.45, 1.5);
+      strokePolyline(context, [
+        projectedPoint(options, instance, left, blockHeight, zOffset),
+        projectedPoint(options, instance, right, blockHeight, zOffset),
+      ]);
+    }
+  };
+
+  // Real suspension cables terminate in massive concrete anchorages rather
+  // than ending in open air. These also hide the visual hand-off to the deck.
+  drawAnchorage(nearApproach, 1);
+  drawAnchorage(farOffset, -1);
 
   const drawTower = (zOffset: number, rear: boolean): void => {
     const towerScale = projectedScaleAt(options, instance, zOffset);
@@ -885,22 +1036,76 @@ function drawRainbowBridge(
 
   const cableHeight = (zOffset: number): number => {
     const [nearTower, farTower] = towerOffsets;
+    const anchorageHeight = 5.2;
+    const catenaryProgress = (amount: number): number => {
+      const t = clamp(amount, 0, 1);
+      const tension = 1.7;
+      return (Math.cosh(t * tension) - 1) / (Math.cosh(tension) - 1);
+    };
     if (zOffset <= nearTower) {
-      return lerp(20, 55, smoothstep(nearOffset, nearTower, zOffset));
+      return lerp(
+        anchorageHeight,
+        55,
+        catenaryProgress((zOffset - nearApproach) / (nearTower - nearApproach)),
+      );
     }
     if (zOffset <= farTower) {
       const span = (zOffset - nearTower) / (farTower - nearTower);
-      return 22 + Math.pow(Math.abs(span - 0.5) * 2, 2) * 33;
+      const normalized = Math.abs(span * 2 - 1);
+      const sag = 1.18;
+      const catenary =
+        (Math.cosh(normalized * sag) - 1) / (Math.cosh(sag) - 1);
+      return 22 + catenary * 33;
     }
-    return lerp(55, 19, smoothstep(farTower, farOffset, zOffset));
+    return lerp(
+      anchorageHeight,
+      55,
+      catenaryProgress((farOffset - zOffset) / (farOffset - farTower)),
+    );
   };
 
-  const cableSamples = detailLevel(options.quality, 15, 23, 32);
-  for (const side of [-1, 1] as const) {
-    const cablePoints: ScreenPoint[] = [];
-    for (let index = 0; index <= cableSamples; index += 1) {
-      const zOffset = lerp(nearOffset, farOffset, index / cableSamples);
-      cablePoints.push(
+  const cableOffsets: number[] = [];
+  const appendCableSection = (
+    sectionStart: number,
+    sectionEnd: number,
+    sampleCount: number,
+  ): void => {
+    const visibleStart = Math.max(sectionStart, nearOffset);
+    const visibleEnd = Math.min(sectionEnd, farOffset);
+    if (visibleEnd < visibleStart) return;
+    if (visibleStart > sectionStart && visibleStart < visibleEnd) {
+      cableOffsets.push(visibleStart);
+    }
+    for (let index = 0; index <= sampleCount; index += 1) {
+      const zOffset = lerp(sectionStart, sectionEnd, index / sampleCount);
+      if (zOffset < visibleStart || zOffset > visibleEnd) continue;
+      if (
+        cableOffsets.length === 0 ||
+        Math.abs(cableOffsets[cableOffsets.length - 1] - zOffset) > 0.001
+      ) {
+        cableOffsets.push(zOffset);
+      }
+    }
+  };
+  appendCableSection(
+    nearApproach,
+    towerOffsets[0],
+    detailLevel(options.quality, 12, 18, 28),
+  );
+  appendCableSection(
+    towerOffsets[0],
+    towerOffsets[1],
+    detailLevel(options.quality, 24, 36, 54),
+  );
+  appendCableSection(
+    towerOffsets[1],
+    farOffset,
+    detailLevel(options.quality, 12, 18, 28),
+  );
+
+  if (detailAlpha > 0.002) {
+    for (const side of [-1, 1] as const) {
+      const cablePoints = cableOffsets.map((zOffset) =>
         projectedPoint(
           options,
           instance,
@@ -909,59 +1114,67 @@ function drawRainbowBridge(
           zOffset,
         ),
       );
+
+      context.globalAlpha = landmarkAlpha * detailAlpha;
+      context.strokeStyle = "rgba(207, 226, 230, 0.93)";
+      context.lineWidth = clamp(scale * 0.58, 0.65, 3.5);
+      strokePolyline(context, cablePoints);
+
+      context.globalAlpha = landmarkAlpha * fineAlpha;
+      context.strokeStyle = "rgba(164, 195, 203, 0.73)";
+      context.lineWidth = clamp(scale * 0.18, 0.4, 1.3);
+      const hangerStep = detailLevel(options.quality, 45, 32, 24);
+      for (
+        let zOffset = nearApproach + hangerStep;
+        zOffset < farOffset;
+        zOffset += hangerStep
+      ) {
+        if (zOffset < nearOffset) continue;
+        strokePolyline(context, [
+          projectedPoint(options, instance, side * deckHalfWidth, deckTop, zOffset),
+          projectedPoint(
+            options,
+            instance,
+            side * (deckHalfWidth + 0.45),
+            cableHeight(zOffset),
+            zOffset,
+          ),
+        ]);
+      }
+
+      glow.save();
+      glow.globalAlpha = glowAlpha * 0.34 * detailAlpha;
+      glow.strokeStyle = "rgba(126, 205, 229, 0.3)";
+      glow.lineWidth = clamp(scale * 2, 2, 12);
+      strokePolyline(glow, cablePoints);
+      glow.restore();
     }
-
-    context.globalAlpha = landmarkAlpha * detailAlpha;
-    context.strokeStyle = "rgba(207, 226, 230, 0.93)";
-    context.lineWidth = clamp(scale * 0.58, 0.65, 3.5);
-    strokePolyline(context, cablePoints);
-
-    context.globalAlpha = landmarkAlpha * fineAlpha;
-    context.strokeStyle = "rgba(164, 195, 203, 0.73)";
-    context.lineWidth = clamp(scale * 0.18, 0.4, 1.3);
-    const hangerStep = detailLevel(options.quality, 45, 32, 24);
-    for (let zOffset = nearOffset + hangerStep; zOffset < farOffset; zOffset += hangerStep) {
-      strokePolyline(context, [
-        projectedPoint(options, instance, side * deckHalfWidth, deckTop, zOffset),
-        projectedPoint(
-          options,
-          instance,
-          side * (deckHalfWidth + 0.45),
-          cableHeight(zOffset),
-          zOffset,
-        ),
-      ]);
-    }
-
-    glow.save();
-    glow.globalAlpha = glowAlpha * 0.34;
-    glow.strokeStyle = "rgba(126, 205, 229, 0.3)";
-    glow.lineWidth = clamp(scale * 2, 2, 12);
-    strokePolyline(glow, cablePoints);
-    glow.restore();
   }
 
-  context.globalAlpha = landmarkAlpha;
-  context.fillStyle = "rgba(211, 238, 242, 0.92)";
-  const lightStep = detailLevel(options.quality, 58, 42, 31);
-  for (let zOffset = nearOffset + 8; zOffset < farOffset; zOffset += lightStep) {
-    for (const side of [-1, 1] as const) {
-      const light = projectedPoint(
-        options,
-        instance,
-        side * (deckHalfWidth - 0.55),
-        deckTop + 0.45,
-        zOffset,
-      );
-      context.beginPath();
-      context.arc(light.x, light.y, clamp(scale * 0.22, 0.5, 1.6), 0, TAU);
-      context.fill();
-      options.glowDot(
-        light.x,
-        light.y,
-        clamp(scale * 1.25, 2.5, 10),
-        rgba(155, 222, 238, instance.alpha * 0.16),
-      );
+  if (detailAlpha > 0.002) {
+    context.globalAlpha = landmarkAlpha * detailAlpha;
+    context.fillStyle = "rgba(211, 238, 242, 0.92)";
+    const lightStep = detailLevel(options.quality, 58, 42, 31);
+    for (let zOffset = nearApproach + 8; zOffset < farOffset; zOffset += lightStep) {
+      if (zOffset < nearOffset) continue;
+      for (const side of [-1, 1] as const) {
+        const light = projectedPoint(
+          options,
+          instance,
+          side * (deckHalfWidth - 0.55),
+          deckTop + 0.45,
+          zOffset,
+        );
+        context.beginPath();
+        context.arc(light.x, light.y, clamp(scale * 0.22, 0.5, 1.6), 0, TAU);
+        context.fill();
+        options.glowDot(
+          light.x,
+          light.y,
+          clamp(scale * 1.25, 2.5, 10),
+          rgba(155, 222, 238, instance.alpha * detailAlpha * 0.16),
+        );
+      }
     }
   }
   context.restore();
@@ -992,7 +1205,7 @@ function drawBigSight(
   const heightPixels = projectedHeight(options, instance, totalHeight);
   const detailAlpha = smoothstep(28, 82, heightPixels);
   const fineAlpha = smoothstep(56, 138, heightPixels);
-  const landmarkAlpha = context.globalAlpha * instance.alpha;
+  const landmarkAlpha = context.globalAlpha;
   const glowAlpha = glow.globalAlpha * instance.alpha;
 
   context.save();
@@ -1104,7 +1317,7 @@ function drawHarborCranes(
   const groupHeightPixels = projectedHeight(options, instance, totalHeight);
   const detailAlpha = smoothstep(26, 76, groupHeightPixels);
   const fineAlpha = smoothstep(54, 132, groupHeightPixels);
-  const landmarkAlpha = context.globalAlpha * instance.alpha;
+  const landmarkAlpha = context.globalAlpha;
   const glowAlpha = glow.globalAlpha * instance.alpha;
   const outward = instance.lateral < 0 ? -1 : 1;
   const craneCount = detailLevel(options.quality, 3, 4, 5);
@@ -1319,6 +1532,628 @@ function drawHarborCranes(
   }
 }
 
+function drawTokyoMetropolitanGovernment(
+  context: LandmarkDrawContext,
+  glow: LandmarkDrawContext,
+  options: ProceduralLandmarkOptions,
+  instance: ProceduralLandmarkInstance,
+): void {
+  const totalHeight = 243.4;
+  if (!isPotentiallyVisible(options, instance, totalHeight, 55)) return;
+
+  const scale = projectedScale(options, instance);
+  const heightPixels = projectedHeight(options, instance, totalHeight);
+  const detailAlpha = smoothstep(42, 116, heightPixels);
+  const fineAlpha = smoothstep(90, 205, heightPixels);
+  const landmarkAlpha = context.globalAlpha;
+  const glowAlpha = glow.globalAlpha * instance.alpha;
+  const top = projectedPoint(options, instance, 0, totalHeight);
+  const base = projectedPoint(options, instance, 0, 0);
+
+  context.save();
+  context.globalAlpha = landmarkAlpha;
+  context.lineJoin = "round";
+  const facade = context.createLinearGradient(0, top.y, 0, base.y);
+  facade.addColorStop(0, "#54626a");
+  facade.addColorStop(0.42, "#2f3d45");
+  facade.addColorStop(1, "#182229");
+  context.fillStyle = facade;
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, -53, 53, 0, 42),
+  );
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, -43, 43, 40, 163),
+  );
+  for (const side of [-1, 1] as const) {
+    const inner = side * 5;
+    const outer = side * 42;
+    fillPolygon(context, [
+      projectedPoint(options, instance, inner, 158),
+      projectedPoint(options, instance, side * 8, 233),
+      projectedPoint(options, instance, side * 15, 241),
+      projectedPoint(options, instance, side * 36, 241),
+      projectedPoint(options, instance, side * 42, 229),
+      projectedPoint(options, instance, outer, 158),
+    ]);
+  }
+
+  context.fillStyle = "rgba(17, 27, 33, 0.94)";
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, -4.2, 4.2, 158, 232),
+  );
+  context.fillStyle = "rgba(94, 112, 121, 0.82)";
+  for (const side of [-1, 1] as const) {
+    fillPolygon(
+      context,
+      projectedRectangle(
+        options,
+        instance,
+        side < 0 ? -38 : 12,
+        side < 0 ? -12 : 38,
+        232,
+        240,
+      ),
+    );
+  }
+
+  context.globalAlpha = landmarkAlpha * detailAlpha;
+  context.strokeStyle = "rgba(153, 186, 201, 0.66)";
+  context.lineWidth = clamp(scale * 0.22, 0.45, 1.5);
+  for (let height = 52; height < 229; height += 10.5) {
+    if (height < 160) {
+      strokePolyline(context, [
+        projectedPoint(options, instance, -41, height),
+        projectedPoint(options, instance, 41, height),
+      ]);
+    } else {
+      for (const side of [-1, 1] as const) {
+        strokePolyline(context, [
+          projectedPoint(options, instance, side * 8, height),
+          projectedPoint(options, instance, side * 40, height),
+        ]);
+      }
+    }
+  }
+  context.strokeStyle = "rgba(105, 147, 166, 0.7)";
+  context.lineWidth = clamp(scale * 0.3, 0.5, 1.9);
+  for (const lateral of [-31, -20, -10, 10, 20, 31]) {
+    strokePolyline(context, [
+      projectedPoint(options, instance, lateral, 43),
+      projectedPoint(options, instance, lateral, 236),
+    ]);
+  }
+
+  context.globalAlpha = landmarkAlpha * fineAlpha;
+  context.fillStyle = "rgba(220, 236, 241, 0.72)";
+  const windowRows = detailLevel(options.quality, 4, 6, 8);
+  for (let row = 0; row < windowRows; row += 1) {
+    const height = 67 + row * 11.5;
+    for (const lateral of [-34, -25, -16, 16, 25, 34]) {
+      const point = projectedPoint(options, instance, lateral, height);
+      context.fillRect(
+        point.x - clamp(scale * 0.8, 0.5, 2.2),
+        point.y - clamp(scale * 0.45, 0.4, 1.6),
+        clamp(scale * 1.6, 0.8, 4.4),
+        clamp(scale * 0.9, 0.7, 3.2),
+      );
+    }
+  }
+  context.restore();
+
+  glow.save();
+  glow.globalAlpha = glowAlpha * 0.32;
+  glow.strokeStyle = "rgba(116, 191, 221, 0.28)";
+  glow.lineWidth = clamp(scale * 2.4, 2.5, 16);
+  for (const side of [-1, 1] as const) {
+    strokePolyline(glow, [
+      projectedPoint(options, instance, side * 42, 44),
+      projectedPoint(options, instance, side * 40, 226),
+      projectedPoint(options, instance, side * 25, 241),
+    ]);
+  }
+  glow.restore();
+
+  for (const lateral of [-25, 25]) {
+    const beacon = projectedPoint(options, instance, lateral, 241);
+    options.glowDot(
+      beacon.x,
+      beacon.y,
+      clamp(heightPixels * 0.035, 3, 12),
+      rgba(239, 47, 38, instance.alpha * 0.44),
+    );
+  }
+}
+
+function drawToranomonHills(
+  context: LandmarkDrawContext,
+  glow: LandmarkDrawContext,
+  options: ProceduralLandmarkOptions,
+  instance: ProceduralLandmarkInstance,
+): void {
+  const totalHeight = 247;
+  if (!isPotentiallyVisible(options, instance, totalHeight, 45)) return;
+
+  const scale = projectedScale(options, instance);
+  const heightPixels = projectedHeight(options, instance, totalHeight);
+  const detailAlpha = smoothstep(42, 118, heightPixels);
+  const fineAlpha = smoothstep(92, 210, heightPixels);
+  const landmarkAlpha = context.globalAlpha;
+  const glowAlpha = glow.globalAlpha * instance.alpha;
+  const top = projectedPoint(options, instance, 0, totalHeight);
+  const base = projectedPoint(options, instance, 0, 0);
+
+  context.save();
+  context.globalAlpha = landmarkAlpha;
+  context.lineJoin = "round";
+  const glass = context.createLinearGradient(0, top.y, 0, base.y);
+  glass.addColorStop(0, "#78919c");
+  glass.addColorStop(0.28, "#3e5966");
+  glass.addColorStop(0.72, "#172a34");
+  glass.addColorStop(1, "#111c23");
+  context.fillStyle = glass;
+  fillPolygon(context, [
+    projectedPoint(options, instance, -43, 0),
+    projectedPoint(options, instance, -39, 57),
+    projectedPoint(options, instance, -34, 238),
+    projectedPoint(options, instance, -27, 244),
+    projectedPoint(options, instance, 27, 244),
+    projectedPoint(options, instance, 34, 238),
+    projectedPoint(options, instance, 39, 57),
+    projectedPoint(options, instance, 43, 0),
+  ]);
+  context.fillStyle = "rgba(9, 20, 27, 0.72)";
+  fillPolygon(context, [
+    projectedPoint(options, instance, 34, 238),
+    projectedPoint(options, instance, 39, 57),
+    projectedPoint(options, instance, 39, 57, 8),
+    projectedPoint(options, instance, 31, 238, 8),
+  ]);
+  context.fillStyle = "rgba(37, 54, 62, 0.96)";
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, -48, 48, 0, 39),
+  );
+
+  context.globalAlpha = landmarkAlpha * detailAlpha;
+  context.strokeStyle = "rgba(158, 206, 222, 0.62)";
+  context.lineWidth = clamp(scale * 0.19, 0.42, 1.45);
+  for (let height = 51; height < 240; height += 10.8) {
+    const halfWidth = lerp(38.7, 34, (height - 51) / 189);
+    strokePolyline(context, [
+      projectedPoint(options, instance, -halfWidth, height),
+      projectedPoint(options, instance, halfWidth, height),
+    ]);
+  }
+  context.strokeStyle = "rgba(109, 166, 190, 0.68)";
+  context.lineWidth = clamp(scale * 0.26, 0.5, 1.8);
+  for (const lateral of [-26, -13, 0, 13, 26]) {
+    strokePolyline(context, [
+      projectedPoint(options, instance, lateral, 40),
+      projectedPoint(options, instance, lateral * 0.82, 242),
+    ]);
+  }
+
+  context.globalAlpha = landmarkAlpha * fineAlpha;
+  context.fillStyle = "rgba(187, 231, 243, 0.78)";
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, -33, 33, 196, 200),
+  );
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, -29, 29, 242, 247),
+  );
+  context.restore();
+
+  glow.save();
+  glow.globalAlpha = glowAlpha * 0.34;
+  glow.strokeStyle = "rgba(104, 199, 229, 0.3)";
+  glow.lineWidth = clamp(scale * 2.5, 2.5, 17);
+  strokePolyline(glow, [
+    projectedPoint(options, instance, -40, 40),
+    projectedPoint(options, instance, -27, 244),
+    projectedPoint(options, instance, 27, 244),
+    projectedPoint(options, instance, 40, 40),
+  ]);
+  glow.restore();
+
+  const beacon = projectedPoint(options, instance, 0, totalHeight);
+  options.glowDot(
+    beacon.x,
+    beacon.y,
+    clamp(heightPixels * 0.026, 3, 11),
+    rgba(240, 47, 38, instance.alpha * 0.46),
+  );
+}
+
+function drawShibuyaScrambleSquare(
+  context: LandmarkDrawContext,
+  glow: LandmarkDrawContext,
+  options: ProceduralLandmarkOptions,
+  instance: ProceduralLandmarkInstance,
+): void {
+  const totalHeight = 229.7;
+  if (!isPotentiallyVisible(options, instance, totalHeight, 42)) return;
+
+  const scale = projectedScale(options, instance);
+  const heightPixels = projectedHeight(options, instance, totalHeight);
+  const detailAlpha = smoothstep(40, 112, heightPixels);
+  const fineAlpha = smoothstep(86, 195, heightPixels);
+  const landmarkAlpha = context.globalAlpha;
+  const glowAlpha = glow.globalAlpha * instance.alpha;
+  const top = projectedPoint(options, instance, 0, totalHeight);
+  const base = projectedPoint(options, instance, 0, 0);
+
+  const tiers = [
+    { left: -40, right: 40, bottom: 0, top: 77 },
+    { left: -35, right: 34, bottom: 76, top: 154 },
+    { left: -30, right: 32, bottom: 153, top: 220 },
+  ] as const;
+
+  context.save();
+  context.globalAlpha = landmarkAlpha;
+  context.lineJoin = "round";
+  const facade = context.createLinearGradient(0, top.y, 0, base.y);
+  facade.addColorStop(0, "#78949e");
+  facade.addColorStop(0.3, "#385461");
+  facade.addColorStop(0.66, "#192e39");
+  facade.addColorStop(1, "#101a21");
+  context.fillStyle = facade;
+  for (const tier of tiers) {
+    fillPolygon(
+      context,
+      projectedRectangle(
+        options,
+        instance,
+        tier.left,
+        tier.right,
+        tier.bottom,
+        tier.top,
+      ),
+    );
+    context.fillStyle = "rgba(7, 17, 23, 0.76)";
+    fillPolygon(context, [
+      projectedPoint(options, instance, tier.right, tier.bottom),
+      projectedPoint(options, instance, tier.right, tier.top),
+      projectedPoint(options, instance, tier.right, tier.top, 7),
+      projectedPoint(options, instance, tier.right, tier.bottom, 7),
+    ]);
+    context.fillStyle = facade;
+  }
+  context.fillStyle = "rgba(91, 110, 116, 0.96)";
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, -27, 29, 218, 226),
+  );
+  context.fillStyle = "rgba(35, 47, 52, 0.98)";
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, -14, 17, 226, totalHeight),
+  );
+
+  context.globalAlpha = landmarkAlpha * detailAlpha;
+  context.strokeStyle = "rgba(159, 205, 219, 0.66)";
+  context.lineWidth = clamp(scale * 0.2, 0.42, 1.45);
+  for (const tier of tiers) {
+    for (let height = tier.bottom + 10; height < tier.top; height += 10.5) {
+      strokePolyline(context, [
+        projectedPoint(options, instance, tier.left + 1.5, height),
+        projectedPoint(options, instance, tier.right - 1.5, height),
+      ]);
+    }
+  }
+  context.strokeStyle = "rgba(107, 164, 184, 0.7)";
+  context.lineWidth = clamp(scale * 0.28, 0.5, 1.8);
+  for (const lateral of [-27, -14, 0, 14, 27]) {
+    strokePolyline(context, [
+      projectedPoint(options, instance, lateral, 2),
+      projectedPoint(options, instance, lateral * 0.72, 218),
+    ]);
+  }
+
+  context.globalAlpha = landmarkAlpha * fineAlpha;
+  context.fillStyle = "rgba(207, 239, 244, 0.82)";
+  for (const [bottom, tierHalfWidth] of [[73, 39], [150, 33], [214, 29]] as const) {
+    fillPolygon(
+      context,
+      projectedRectangle(
+        options,
+        instance,
+        -tierHalfWidth,
+        tierHalfWidth,
+        bottom,
+        bottom + 3.4,
+      ),
+    );
+  }
+  context.restore();
+
+  glow.save();
+  glow.globalAlpha = glowAlpha * 0.35;
+  glow.strokeStyle = "rgba(97, 197, 226, 0.3)";
+  glow.lineWidth = clamp(scale * 2.5, 2.5, 17);
+  strokePolyline(glow, [
+    projectedPoint(options, instance, -40, 0),
+    projectedPoint(options, instance, -30, 220),
+    projectedPoint(options, instance, 32, 220),
+    projectedPoint(options, instance, 40, 0),
+  ]);
+  glow.restore();
+
+  const beacon = projectedPoint(options, instance, 0, totalHeight);
+  options.glowDot(
+    beacon.x,
+    beacon.y,
+    clamp(heightPixels * 0.028, 3, 11),
+    rgba(239, 45, 37, instance.alpha * 0.46),
+  );
+}
+
+function drawCocoonTower(
+  context: LandmarkDrawContext,
+  glow: LandmarkDrawContext,
+  options: ProceduralLandmarkOptions,
+  instance: ProceduralLandmarkInstance,
+): void {
+  const totalHeight = 203.65;
+  if (!isPotentiallyVisible(options, instance, totalHeight, 29)) return;
+
+  const scale = projectedScale(options, instance);
+  const heightPixels = projectedHeight(options, instance, totalHeight);
+  const detailAlpha = smoothstep(38, 108, heightPixels);
+  const fineAlpha = smoothstep(82, 185, heightPixels);
+  const landmarkAlpha = context.globalAlpha;
+  const glowAlpha = glow.globalAlpha * instance.alpha;
+  const halfWidthAt = (height: number): number => {
+    if (height < 52) return lerp(13, 24, height / 52);
+    if (height < 112) return lerp(24, 27, (height - 52) / 60);
+    if (height < 176) return lerp(27, 18, (height - 112) / 64);
+    return lerp(18, 2.5, clamp((height - 176) / 27.65, 0, 1));
+  };
+
+  const silhouetteHeights = [0, 24, 52, 82, 112, 142, 176, 194, 203.65];
+  const silhouette: ScreenPoint[] = [];
+  for (const height of silhouetteHeights) {
+    silhouette.push(
+      projectedPoint(options, instance, -halfWidthAt(height), height),
+    );
+  }
+  for (let index = silhouetteHeights.length - 1; index >= 0; index -= 1) {
+    const height = silhouetteHeights[index];
+    silhouette.push(
+      projectedPoint(options, instance, halfWidthAt(height), height),
+    );
+  }
+
+  context.save();
+  context.globalAlpha = landmarkAlpha;
+  context.lineJoin = "round";
+  const top = projectedPoint(options, instance, 0, totalHeight);
+  const base = projectedPoint(options, instance, 0, 0);
+  const facade = context.createLinearGradient(0, top.y, 0, base.y);
+  facade.addColorStop(0, "#9aabb1");
+  facade.addColorStop(0.28, "#526a75");
+  facade.addColorStop(0.72, "#233943");
+  facade.addColorStop(1, "#111e25");
+  context.fillStyle = facade;
+  fillPolygon(context, silhouette);
+  context.fillStyle = "rgba(8, 25, 34, 0.78)";
+  fillPolygon(context, [
+    projectedPoint(options, instance, -4, 8),
+    projectedPoint(options, instance, -2.2, 196),
+    projectedPoint(options, instance, 2.2, 196),
+    projectedPoint(options, instance, 4, 8),
+  ]);
+
+  context.globalAlpha = landmarkAlpha * detailAlpha;
+  context.strokeStyle = "rgba(220, 232, 232, 0.86)";
+  context.lineWidth = clamp(scale * 0.72, 0.65, 4.2);
+  const latticeCount = detailLevel(options.quality, 5, 8, 11);
+  for (let index = 0; index < latticeCount; index += 1) {
+    const low = 8 + (index / latticeCount) * 160;
+    const high = Math.min(198, low + 34);
+    strokePolyline(context, [
+      projectedPoint(options, instance, -halfWidthAt(low) * 0.94, low),
+      projectedPoint(options, instance, halfWidthAt(high) * 0.94, high),
+    ]);
+    strokePolyline(context, [
+      projectedPoint(options, instance, halfWidthAt(low) * 0.94, low),
+      projectedPoint(options, instance, -halfWidthAt(high) * 0.94, high),
+    ]);
+  }
+  context.strokeStyle = "rgba(112, 184, 207, 0.72)";
+  context.lineWidth = clamp(scale * 0.3, 0.5, 1.8);
+  for (const height of [43, 77, 112, 146, 177]) {
+    strokePolyline(context, [
+      projectedPoint(options, instance, -halfWidthAt(height) * 0.9, height),
+      projectedPoint(options, instance, halfWidthAt(height) * 0.9, height),
+    ]);
+  }
+
+  context.globalAlpha = landmarkAlpha * fineAlpha;
+  context.strokeStyle = "rgba(174, 225, 238, 0.82)";
+  context.lineWidth = clamp(scale * 0.25, 0.45, 1.5);
+  strokePolyline(context, [
+    projectedPoint(options, instance, 0, 7),
+    projectedPoint(options, instance, 0, 198),
+  ]);
+  context.restore();
+
+  glow.save();
+  glow.globalAlpha = glowAlpha * 0.34;
+  glow.strokeStyle = "rgba(98, 194, 222, 0.28)";
+  glow.lineWidth = clamp(scale * 2.6, 2.5, 17);
+  strokePolyline(glow, [
+    projectedPoint(options, instance, -13, 0),
+    projectedPoint(options, instance, -27, 112),
+    projectedPoint(options, instance, 0, totalHeight),
+    projectedPoint(options, instance, 27, 112),
+    projectedPoint(options, instance, 13, 0),
+  ]);
+  glow.restore();
+
+  const beacon = projectedPoint(options, instance, 0, totalHeight);
+  options.glowDot(
+    beacon.x,
+    beacon.y,
+    clamp(heightPixels * 0.027, 3, 10),
+    rgba(239, 48, 38, instance.alpha * 0.44),
+  );
+}
+
+function drawFujiTelevision(
+  context: LandmarkDrawContext,
+  glow: LandmarkDrawContext,
+  options: ProceduralLandmarkOptions,
+  instance: ProceduralLandmarkInstance,
+): void {
+  const totalHeight = 123.45;
+  if (!isPotentiallyVisible(options, instance, totalHeight, 105)) return;
+
+  const scale = projectedScale(options, instance);
+  const heightPixels = projectedHeight(options, instance, totalHeight);
+  const detailAlpha = smoothstep(32, 88, heightPixels);
+  const fineAlpha = smoothstep(64, 145, heightPixels);
+  const landmarkAlpha = context.globalAlpha;
+  const glowAlpha = glow.globalAlpha * instance.alpha;
+
+  context.save();
+  context.globalAlpha = landmarkAlpha;
+  context.lineJoin = "round";
+  context.fillStyle = "rgba(22, 34, 41, 0.98)";
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, -102, -62, 0, 108),
+  );
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, 62, 102, 0, 123),
+  );
+  context.fillStyle = "rgba(45, 62, 70, 0.96)";
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, -61, 61, 0, 38),
+  );
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, -70, 70, 54, 82),
+  );
+  context.fillStyle = "rgba(75, 94, 101, 0.92)";
+  fillPolygon(
+    context,
+    projectedRectangle(options, instance, -102, 102, 105, 116),
+  );
+
+  context.globalAlpha = landmarkAlpha * detailAlpha;
+  context.strokeStyle = "rgba(171, 194, 200, 0.84)";
+  context.lineWidth = clamp(scale * 0.7, 0.65, 4.3);
+  for (const lateral of [-102, -62, 62, 102]) {
+    strokePolyline(context, [
+      projectedPoint(options, instance, lateral, 0),
+      projectedPoint(options, instance, lateral, lateral > 0 ? 123 : 108),
+    ]);
+  }
+  for (const height of [18, 38, 55, 82, 106, 116]) {
+    strokePolyline(context, [
+      projectedPoint(options, instance, -102, height),
+      projectedPoint(options, instance, 102, height),
+    ]);
+  }
+  context.strokeStyle = "rgba(118, 147, 158, 0.72)";
+  context.lineWidth = clamp(scale * 0.32, 0.5, 2);
+  for (const [low, high] of [[1, 37], [39, 81], [83, 105]] as const) {
+    strokePolyline(context, [
+      projectedPoint(options, instance, -100, low),
+      projectedPoint(options, instance, 100, high),
+    ]);
+    strokePolyline(context, [
+      projectedPoint(options, instance, 100, low),
+      projectedPoint(options, instance, -100, high),
+    ]);
+  }
+
+  const sphereCenter = projectedPoint(options, instance, 14, 107.45);
+  const sphereRadius = Math.max(2, 16 * scale);
+  const sphereGradient = context.createRadialGradient(
+    sphereCenter.x - sphereRadius * 0.32,
+    sphereCenter.y - sphereRadius * 0.38,
+    sphereRadius * 0.08,
+    sphereCenter.x,
+    sphereCenter.y,
+    sphereRadius,
+  );
+  sphereGradient.addColorStop(0, "rgba(228, 241, 243, 0.98)");
+  sphereGradient.addColorStop(0.42, "rgba(132, 158, 166, 0.98)");
+  sphereGradient.addColorStop(1, "rgba(41, 59, 66, 0.98)");
+  context.globalAlpha = landmarkAlpha;
+  context.fillStyle = sphereGradient;
+  context.beginPath();
+  context.ellipse(
+    sphereCenter.x,
+    sphereCenter.y,
+    sphereRadius,
+    sphereRadius * 0.94,
+    0,
+    0,
+    TAU,
+  );
+  context.fill();
+  context.globalAlpha = landmarkAlpha * fineAlpha;
+  context.strokeStyle = "rgba(215, 233, 236, 0.82)";
+  context.lineWidth = clamp(scale * 0.32, 0.5, 1.8);
+  context.stroke();
+  context.beginPath();
+  context.ellipse(
+    sphereCenter.x,
+    sphereCenter.y,
+    sphereRadius * 0.72,
+    sphereRadius * 0.94,
+    0,
+    0,
+    TAU,
+  );
+  context.stroke();
+  context.beginPath();
+  context.ellipse(
+    sphereCenter.x,
+    sphereCenter.y,
+    sphereRadius,
+    sphereRadius * 0.34,
+    0,
+    0,
+    TAU,
+  );
+  context.stroke();
+  context.restore();
+
+  glow.save();
+  glow.globalAlpha = glowAlpha * 0.3;
+  glow.fillStyle = "rgba(151, 216, 231, 0.2)";
+  glow.beginPath();
+  glow.ellipse(
+    sphereCenter.x,
+    sphereCenter.y,
+    clamp(sphereRadius * 1.6, 8, 82),
+    clamp(sphereRadius * 1.45, 8, 76),
+    0,
+    0,
+    TAU,
+  );
+  glow.fill();
+  glow.restore();
+
+  const beacon = projectedPoint(options, instance, 82, totalHeight);
+  options.glowDot(
+    beacon.x,
+    beacon.y,
+    clamp(heightPixels * 0.04, 3, 11),
+    rgba(239, 47, 38, instance.alpha * 0.46),
+  );
+}
+
 /**
  * Draws recurring Tokyo landmarks in world-space order. The caller owns both
  * contexts and should clear/composite its glow layer around this call.
@@ -1329,11 +2164,25 @@ export function drawProceduralLandmark(
   options: ProceduralLandmarkOptions,
   landmark: ProceduralLandmarkInstance,
 ): void {
-  if (landmark.alpha <= 0.002) return;
+  context.save();
+  glow.save();
+  const distanceBrightness = lerp(0.04, 1, landmark.alpha);
+  context.filter = `brightness(${distanceBrightness})`;
+  glow.filter = `brightness(${distanceBrightness})`;
   if (landmark.kind === "tokyo-tower") {
     drawTokyoTower(context, glow, options, landmark);
   } else if (landmark.kind === "skytree") {
     drawSkytree(context, glow, options, landmark);
+  } else if (landmark.kind === "tokyo-metropolitan-government") {
+    drawTokyoMetropolitanGovernment(context, glow, options, landmark);
+  } else if (landmark.kind === "toranomon-hills") {
+    drawToranomonHills(context, glow, options, landmark);
+  } else if (landmark.kind === "shibuya-scramble-square") {
+    drawShibuyaScrambleSquare(context, glow, options, landmark);
+  } else if (landmark.kind === "cocoon-tower") {
+    drawCocoonTower(context, glow, options, landmark);
+  } else if (landmark.kind === "fuji-television") {
+    drawFujiTelevision(context, glow, options, landmark);
   } else if (landmark.kind === "rainbow-bridge") {
     drawRainbowBridge(context, glow, options, landmark);
   } else if (landmark.kind === "big-sight") {
@@ -1341,6 +2190,8 @@ export function drawProceduralLandmark(
   } else {
     drawHarborCranes(context, glow, options, landmark);
   }
+  glow.restore();
+  context.restore();
 }
 
 export function drawProceduralLandmarks(

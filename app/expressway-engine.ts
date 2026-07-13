@@ -320,7 +320,12 @@ export function createExpresswayEngine(
   let lastFrameTime = 0;
   let lastTelemetryTime = -Infinity;
   let elapsedTime = 0;
-  let totalDistanceMeters = 0;
+  const qaDistance = Number(
+    new URLSearchParams(window.location.search).get("__qaDistance") ?? 0,
+  );
+  let totalDistanceMeters = Number.isFinite(qaDistance)
+    ? clamp(qaDistance, 0, 100_000)
+    : 0;
   let speedKmh = 82;
   let smoothedFps = 60;
   let frameNumber = 0;
@@ -333,6 +338,17 @@ export function createExpresswayEngine(
     if (family.startsWith("led")) return `rgba(255, 121, 31, ${alpha * 1.45})`;
     if (family.startsWith("lane-control")) return `rgba(82, 238, 199, ${alpha})`;
     if (family.startsWith("blue")) return `rgba(86, 192, 242, ${alpha})`;
+    if (family.includes("amber") || family.includes("orange")) {
+      return `rgba(255, 139, 48, ${alpha})`;
+    }
+    if (family.includes("red")) return `rgba(255, 65, 84, ${alpha})`;
+    if (family.includes("indigo") || family.includes("violet")) {
+      return `rgba(148, 107, 255, ${alpha})`;
+    }
+    if (family.includes("lime")) return `rgba(203, 255, 67, ${alpha})`;
+    if (family.includes("monochrome") || family.includes("white")) {
+      return `rgba(190, 239, 236, ${alpha})`;
+    }
     if (family.includes("magenta")) return `rgba(255, 82, 193, ${alpha})`;
     if (family.startsWith("advertising")) return `rgba(72, 208, 242, ${alpha})`;
     return `rgba(61, 165, 127, ${alpha})`;
@@ -634,7 +650,8 @@ export function createExpresswayEngine(
     const location = locationIndex(totalDistanceMeters + z);
     const occupancy = seeded(index * 2 + (side > 0 ? 1 : 0), 101);
     const locationDensity = [0.02, 0.08, 0.16, 0.19, 0.13, 0.02, 0.01, 0.04, 0.2, 0.24, 0.31, 0.12, 0.17, 0.06][location];
-    if (occupancy < locationDensity + (quality === "MOBILE" ? 0.08 : 0)) return;
+    const densityRelief = quality === "MOBILE" ? 0.08 : quality === "BALANCED" ? 0.045 : 0.025;
+    if (occupancy < locationDensity + densityRelief) return;
 
     const openWaterfront = location === 8 || location === 9 || location === 10;
     const closeCanyon = location === 0 || location === 5 || location === 6 || location === 7;
@@ -646,7 +663,7 @@ export function createExpresswayEngine(
       (closeCanyon ? 16 : openWaterfront ? 30 : 18) +
       seeded(index, side > 0 ? 113 : 127) *
         (closeCanyon ? 58 : openWaterfront ? 96 : 72);
-    const facadeClearance = closeCanyon ? 6.5 : openWaterfront ? 13 : 9;
+    const facadeClearance = closeCanyon ? 8 : openWaterfront ? 15 : 11;
     const minimumCenterDistance =
       ROAD_HALF_WIDTH + facadeClearance + widthMeters * 0.5;
     const lateral = side * Math.max(nominalCenterDistance, minimumCenterDistance);
@@ -664,16 +681,27 @@ export function createExpresswayEngine(
 
     const left = base.x - width * 0.5;
     const top = base.groundY - height;
-    const hazeLift = smoothstep(900, CITY_FAR_DISTANCE, z) * 9;
-    const bodyLightness = Math.round(8 + seeded(index, 181) * 8 + hazeLift);
-    // Keep the facade opaque; atmospheric depth comes from color lift and only
-    // the last 350 m of the city range use an alpha transition.
-    const atmosphericAlpha = farFade(z, 2450, CITY_FAR_DISTANCE);
+    const bodyLightness = Math.round(8 + seeded(index, 181) * 8);
+    const skylineBlend = smoothstep(1850, CITY_FAR_DISTANCE, z);
+    const skylineColor = (red: number, green: number, blue: number): string =>
+      `rgb(${Math.round(lerp(red, 5, skylineBlend))}, ${Math.round(lerp(green, 11, skylineBlend))}, ${Math.round(lerp(blue, 16, skylineBlend))})`;
+    // Keep the complete building mass opaque. Atmospheric depth is expressed
+    // through colour lift instead of making distant towers look translucent.
+    const atmosphericAlpha = 1;
     context.globalAlpha = atmosphericAlpha;
     const facadeGradient = context.createLinearGradient(left, 0, left + width, 0);
-    facadeGradient.addColorStop(0, `rgb(${Math.max(2, bodyLightness - 5)}, ${bodyLightness}, ${bodyLightness + 3})`);
-    facadeGradient.addColorStop(0.48, `rgb(${bodyLightness + 2}, ${bodyLightness + 7}, ${bodyLightness + 11})`);
-    facadeGradient.addColorStop(1, `rgb(${Math.max(2, bodyLightness - 4)}, ${bodyLightness}, ${bodyLightness + 5})`);
+    facadeGradient.addColorStop(
+      0,
+      skylineColor(Math.max(2, bodyLightness - 5), bodyLightness, bodyLightness + 3),
+    );
+    facadeGradient.addColorStop(
+      0.48,
+      skylineColor(bodyLightness + 2, bodyLightness + 7, bodyLightness + 11),
+    );
+    facadeGradient.addColorStop(
+      1,
+      skylineColor(Math.max(2, bodyLightness - 4), bodyLightness, bodyLightness + 5),
+    );
     context.fillStyle = facadeGradient;
     context.fillRect(left, top, width, height + 2);
     const facadeTextureVisibility = 0.16 * farFade(z, 620, 930);
@@ -694,16 +722,20 @@ export function createExpresswayEngine(
     }
 
     const depth = width * (0.12 + seeded(index, 193) * 0.12);
-    context.fillStyle = side > 0 ? "#05090d" : "#0d1216";
+    context.fillStyle = side > 0
+      ? skylineColor(5, 9, 13)
+      : skylineColor(13, 18, 22);
     fillPolygon(context, [
-      [side > 0 ? left : left + width, top],
-      [side > 0 ? left - depth : left + width + depth, top + depth * 0.22],
-      [side > 0 ? left - depth : left + width + depth, base.groundY],
-      [side > 0 ? left : left + width, base.groundY],
+      [side > 0 ? left + width : left, top],
+      [side > 0 ? left + width + depth : left - depth, top + depth * 0.22],
+      [side > 0 ? left + width + depth : left - depth, base.groundY],
+      [side > 0 ? left + width : left, base.groundY],
     ]);
 
     const roofAccent = seeded(index, 211);
     if (roofAccent > 0.58 && width > 7) {
+      const roofVisibility = farFade(z, 1300, 2200);
+      context.globalAlpha = atmosphericAlpha * roofVisibility;
       context.strokeStyle = roofAccent > 0.83
         ? "rgba(159, 188, 199, 0.5)"
         : "rgba(88, 105, 115, 0.38)";
@@ -712,6 +744,7 @@ export function createExpresswayEngine(
       context.moveTo(left, top + 1);
       context.lineTo(left + width, top + 1);
       context.stroke();
+      context.globalAlpha = atmosphericAlpha;
     }
 
     if (height > 3 && width > 2) {
@@ -723,7 +756,8 @@ export function createExpresswayEngine(
       const columnStep = Math.max(1, Math.ceil(realColumns / maximumColumns));
       const windowWidth = clamp(base.scale * 2.05, 0.65, width * 0.18);
       const windowHeight = clamp(base.scale * 1.08, 0.55, 4.2);
-      context.globalAlpha = atmosphericAlpha * farFade(z, 1420, 2140);
+      const windowVisibility = farFade(z, 1420, 2140);
+      context.globalAlpha = atmosphericAlpha * windowVisibility;
 
       const facadeDetailVisibility =
         0.34 * farFade(z, 470, 820) * smoothstep(6, 18, width);
@@ -775,7 +809,9 @@ export function createExpresswayEngine(
               windowX + windowWidth * 0.5,
               windowY + windowHeight * 0.5,
               clamp(base.scale * 1.8, 2, 12),
-              warm ? "rgba(255, 188, 105, 0.19)" : "rgba(143, 211, 239, 0.16)",
+              warm
+                ? `rgba(255, 188, 105, ${0.19 * windowVisibility})`
+                : `rgba(143, 211, 239, ${0.16 * windowVisibility})`,
             );
           }
         }
@@ -785,27 +821,27 @@ export function createExpresswayEngine(
 
     if (
       advertisingSigns.length > 0 &&
-      seeded(index, 271) > (location === 5 || location === 13 ? 0.76 : 0.93)
+      seeded(index, 271) > (location === 5 || location === 13 ? 0.68 : 0.88)
     ) {
       const sign = advertisingSigns[
-        positiveModulo(index, advertisingSigns.length)
+        positiveModulo(index * 5 + (side > 0 ? 7 : 0), advertisingSigns.length)
       ];
       const boardAspect = sign.heightMeters / sign.widthMeters;
       const boardWidth = Math.min(
-        width * 0.74,
-        (height * 0.58) / boardAspect,
+        width * 0.86,
+        (height * 0.7) / boardAspect,
       );
       const boardHeight = boardWidth * boardAspect;
       const boardX = left + (width - boardWidth) * 0.5;
       const boardY = clamp(
-        top + height * 0.18,
+        top + height * 0.12,
         top + 1,
         base.groundY - boardHeight - Math.max(1, height * 0.06),
       );
       const advertisingVisibility =
-        smoothstep(0.6, 11, boardWidth) *
-        smoothstep(1.2, 16, boardHeight) *
-        farFade(z, 1500, 2380);
+        smoothstep(2, 14, boardWidth) *
+        smoothstep(1.5, 11, boardHeight) *
+        farFade(z, 1750, 2550);
       if (advertisingVisibility > 0.002) {
         context.save();
         context.globalAlpha = atmosphericAlpha * advertisingVisibility;
@@ -824,11 +860,19 @@ export function createExpresswayEngine(
     }
 
     if (heightMeters > 65 && width > 3) {
+      const beaconVisibility = farFade(z, 1550, 2300);
       const beaconX = left + width * (0.28 + seeded(index, 283) * 0.44);
       const beaconY = top - 1;
-      context.fillStyle = "rgba(223, 37, 34, 0.9)";
-      context.fillRect(beaconX - 1, beaconY - 1, 2, 2);
-      drawGlowDot(beaconX, beaconY, clamp(base.scale * 1.4, 3, 13), "rgba(255, 30, 24, 0.34)");
+      if (beaconVisibility > 0.002) {
+        context.fillStyle = `rgba(223, 37, 34, ${0.9 * beaconVisibility})`;
+        context.fillRect(beaconX - 1, beaconY - 1, 2, 2);
+        drawGlowDot(
+          beaconX,
+          beaconY,
+          clamp(base.scale * 1.4, 3, 13),
+          `rgba(255, 30, 24, ${0.34 * beaconVisibility})`,
+        );
+      }
     }
     context.globalAlpha = 1;
   }
@@ -878,7 +922,7 @@ export function createExpresswayEngine(
           world < site.world + farClearance
         );
       });
-    const spacing = quality === "MOBILE" ? 48 : quality === "BALANCED" ? 38 : 32;
+    const spacing = quality === "MOBILE" ? 51 : quality === "BALANCED" ? 41 : 35;
     const first = Math.floor((totalDistanceMeters - spacing) / spacing);
     const last = Math.ceil((totalDistanceMeters + CITY_FAR_DISTANCE + 90) / spacing);
     for (let index = last; index >= first; index -= 1) {
@@ -1527,13 +1571,13 @@ export function createExpresswayEngine(
       const deltaY = top.y - previous.y;
       const distance = Math.hypot(deltaX, deltaY);
       if (distance > 0.08) {
-        const trailLength = Math.min(5, distance);
+        const trailLength = Math.min(7.5, distance);
         const ratio = trailLength / distance;
         const glowContext = glowLayer.context;
         glowContext.save();
-        glowContext.globalAlpha = 0.1 * visibility;
+        glowContext.globalAlpha = 0.14 * visibility;
         glowContext.strokeStyle = cool ? "rgba(155, 224, 250, 0.72)" : "rgba(255, 156, 78, 0.7)";
-        glowContext.lineWidth = Math.max(0.8, lampRadius * 1.08);
+        glowContext.lineWidth = Math.max(0.9, lampRadius * 1.16);
         glowContext.lineCap = "round";
         glowContext.beginPath();
         glowContext.moveTo(lampX - deltaX * ratio, top.y - deltaY * ratio);
@@ -1769,12 +1813,20 @@ export function createExpresswayEngine(
     const width = dimensions.width * base.scale;
     const height = dimensions.height * base.scale;
     if (base.x + width < -12 || base.x - width > cssWidth + 12) return;
-    const visibility = farFade(object.z, FAR_DISTANCE * 0.63, FAR_DISTANCE * 0.96);
-    if (visibility <= 0.002) return;
+    // Vehicles remain solid silhouettes throughout their visible range. Their
+    // apparent depth now comes from scale and haze-coloured lighting, not fade.
+    const visibility = 1;
 
     if (width < 1.25) {
       context.save();
       context.globalAlpha = visibility;
+      context.fillStyle = "#151b1f";
+      context.fillRect(
+        base.x - Math.max(0.7, width * 0.5),
+        base.groundY - 2,
+        Math.max(1.4, width),
+        1.6,
+      );
       for (const side of [-1, 1]) {
         const tailX = base.x + side * Math.max(0.55, width * 0.34);
         context.fillStyle = "rgba(255, 56, 42, 0.92)";
