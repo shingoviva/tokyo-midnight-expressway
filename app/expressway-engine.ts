@@ -320,12 +320,7 @@ export function createExpresswayEngine(
   let lastFrameTime = 0;
   let lastTelemetryTime = -Infinity;
   let elapsedTime = 0;
-  const qaDistance = Number(
-    new URLSearchParams(window.location.search).get("__qaDistance") ?? 0,
-  );
-  let totalDistanceMeters = Number.isFinite(qaDistance)
-    ? clamp(qaDistance, 0, 100_000)
-    : 0;
+  let totalDistanceMeters = 0;
   let speedKmh = 82;
   let smoothedFps = 60;
   let frameNumber = 0;
@@ -683,8 +678,12 @@ export function createExpresswayEngine(
     const top = base.groundY - height;
     const bodyLightness = Math.round(8 + seeded(index, 181) * 8);
     const skylineBlend = smoothstep(1850, CITY_FAR_DISTANCE, z);
-    const skylineColor = (red: number, green: number, blue: number): string =>
-      `rgb(${Math.round(lerp(red, 5, skylineBlend))}, ${Math.round(lerp(green, 11, skylineBlend))}, ${Math.round(lerp(blue, 16, skylineBlend))})`;
+    const skylineColor = (red: number, green: number, blue: number): string => {
+      const skylineRed = Math.round(lerp(red, 5, skylineBlend));
+      const skylineGreen = Math.round(lerp(green, 11, skylineBlend));
+      const skylineBlue = Math.round(lerp(blue, 16, skylineBlend));
+      return `rgb(${skylineRed}, ${skylineGreen}, ${skylineBlue})`;
+    };
     // Keep the complete building mass opaque. Atmospheric depth is expressed
     // through colour lift instead of making distant towers look translucent.
     const atmosphericAlpha = 1;
@@ -823,9 +822,11 @@ export function createExpresswayEngine(
       advertisingSigns.length > 0 &&
       seeded(index, 271) > (location === 5 || location === 13 ? 0.68 : 0.88)
     ) {
-      const sign = advertisingSigns[
-        positiveModulo(index * 5 + (side > 0 ? 7 : 0), advertisingSigns.length)
-      ];
+      const signIndex = positiveModulo(
+        index * 5 + (side > 0 ? 7 : 0),
+        advertisingSigns.length,
+      );
+      const sign = advertisingSigns[signIndex];
       const boardAspect = sign.heightMeters / sign.widthMeters;
       const boardWidth = Math.min(
         width * 0.86,
