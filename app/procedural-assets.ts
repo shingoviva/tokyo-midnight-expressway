@@ -7,9 +7,12 @@ export type ProceduralSurfaceAssets = {
 
 export type ProceduralSignSprite = {
   canvas: CanvasImageSource;
+  mipmaps: readonly CanvasImageSource[];
   widthMeters: number;
   heightMeters: number;
   glowColor: string;
+  backgroundColor: string;
+  edgeColor: string;
   family: string;
 };
 
@@ -229,8 +232,9 @@ function createSoundwall(): CanvasLike {
   context.fillRect(0, 0, 18, 512);
   context.fillRect(247, 0, 18, 512);
   context.fillRect(494, 0, 18, 512);
-  context.fillRect(0, 0, 512, 22);
-  context.fillRect(0, 490, 512, 22);
+  // Horizontal borders are drawn geometrically by the engine. Baking them
+  // into an affine wall texture turns the border into moving wedges under
+  // perspective projection.
   context.strokeStyle = "rgba(190, 210, 216, .34)";
   context.lineWidth = 2;
   context.strokeRect(19, 23, 227, 466);
@@ -657,12 +661,32 @@ function createSign(definition: SignDefinition, index: number): ProceduralSignSp
   const context = getContext(canvas);
   paintBoard(context, width, height, definition.palette, 3001 + index * 97);
   definition.render(context, width, height);
+  const mipmaps: CanvasImageSource[] = [canvas];
+  let previous = canvas;
+  let previousWidth = width;
+  let previousHeight = height;
+  while (Math.max(previousWidth, previousHeight) > 16) {
+    const nextWidth = Math.max(1, Math.round(previousWidth * 0.5));
+    const nextHeight = Math.max(1, Math.round(previousHeight * 0.5));
+    const next = createCanvas(nextWidth, nextHeight);
+    const nextContext = getContext(next);
+    nextContext.imageSmoothingEnabled = true;
+    nextContext.imageSmoothingQuality = "high";
+    nextContext.drawImage(previous, 0, 0, nextWidth, nextHeight);
+    mipmaps.push(next);
+    previous = next;
+    previousWidth = nextWidth;
+    previousHeight = nextHeight;
+  }
   return {
     canvas,
+    mipmaps,
     family: definition.family,
     widthMeters: definition.widthMeters,
     heightMeters: definition.heightMeters,
     glowColor: definition.palette.glow,
+    backgroundColor: definition.palette.background,
+    edgeColor: definition.palette.edge,
   };
 }
 

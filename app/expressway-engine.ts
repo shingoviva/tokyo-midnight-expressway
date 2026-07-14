@@ -1,4 +1,7 @@
-import { createProceduralAssets } from "./procedural-assets";
+import {
+  createProceduralAssets,
+  type ProceduralSignSprite,
+} from "./procedural-assets";
 import {
   collectProceduralLandmarks,
   collectProceduralLandmarkSites,
@@ -82,6 +85,17 @@ type CityLayerItem =
       nearWorld: number;
       farWorld: number;
     };
+
+type BuildingGlowMask = {
+  z: number;
+  rect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  sideFace: ReadonlyArray<readonly [number, number]>;
+};
 
 type ElevatedSpanSpec = {
   level: 0 | 1;
@@ -285,6 +299,8 @@ export function createExpresswayEngine(
 
   const context = mainContext;
   const glowLayer = createDrawingLayer();
+  const sceneGlowLayer = createDrawingLayer();
+  let activeGlowLayer = glowLayer;
   const noiseLayer = createDrawingLayer(128, 128);
   const proceduralAssets = createProceduralAssets();
   const advertisingSigns = proceduralAssets.signs.filter(
@@ -301,10 +317,6 @@ export function createExpresswayEngine(
     proceduralAssets.surfaces.concrete,
     "repeat",
   );
-  const soundwallPattern = context.createPattern(
-    proceduralAssets.surfaces.soundwall,
-    "repeat",
-  );
   const metalPattern = context.createPattern(
     proceduralAssets.surfaces.metal,
     "repeat",
@@ -317,7 +329,6 @@ export function createExpresswayEngine(
   let focalLength = 1;
   let horizon = 1;
   let quality: Telemetry["quality"] = "HIGH";
-  let roadSliceCount = 104;
   let noisePattern: CanvasPattern | null = null;
 
   let started = false;
@@ -357,7 +368,23 @@ export function createExpresswayEngine(
     return `rgba(61, 165, 127, ${alpha})`;
   }
 
+  function selectSignMipmap(
+    sign: ProceduralSignSprite,
+    projectedWidth: number,
+    projectedHeight: number,
+  ): CanvasImageSource {
+    const projectedMax = Math.max(projectedWidth, projectedHeight) * pixelRatio;
+    const desiredSourceMax = clamp(projectedMax * 2.25, 16, 1024);
+    const level = clamp(
+      Math.round(Math.log2(1024 / desiredSourceMax)),
+      0,
+      sign.mipmaps.length - 1,
+    );
+    return sign.mipmaps[level] ?? sign.canvas;
+  }
+
   const roadPoints: RoadPoint[] = [];
+  const buildingGlowMasks: BuildingGlowMask[] = [];
   const sceneObjects: SceneObject[] = [];
   const cityLayerItems: CityLayerItem[] = [];
   const vehicles: TrafficVehicle[] = [];
@@ -472,16 +499,20 @@ export function createExpresswayEngine(
 
   function configureContextTransforms(): void {
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-    glowLayer.context.setTransform(
-      pixelRatio * glowRatio,
-      0,
-      0,
-      pixelRatio * glowRatio,
-      0,
-      0,
-    );
+    for (const layer of [glowLayer, sceneGlowLayer]) {
+      layer.context.setTransform(
+        pixelRatio * glowRatio,
+        0,
+        0,
+        pixelRatio * glowRatio,
+        0,
+        0,
+      );
+      layer.context.imageSmoothingEnabled = true;
+      layer.context.imageSmoothingQuality = "high";
+    }
     context.imageSmoothingEnabled = true;
-    glowLayer.context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
   }
 
   function regenerateNoise(seedOffset: number): void {
@@ -521,7 +552,6 @@ export function createExpresswayEngine(
     cssHeight = nextHeight;
     pixelRatio = nextRatio;
     glowRatio = quality === "MOBILE" ? 0.42 : 0.5;
-    roadSliceCount = quality === "MOBILE" ? 240 : quality === "BALANCED" ? 340 : 440;
     focalLength = cssHeight * (cssWidth < cssHeight ? 0.72 : 0.8);
     horizon = cssHeight * (cssWidth < cssHeight ? 0.46 : 0.62);
     lightTrailPositions.clear();
@@ -535,6 +565,11 @@ export function createExpresswayEngine(
 
     resizeDrawingLayer(
       glowLayer,
+      backingWidth * glowRatio,
+      backingHeight * glowRatio,
+    );
+    resizeDrawingLayer(
+      sceneGlowLayer,
       backingWidth * glowRatio,
       backingHeight * glowRatio,
     );
@@ -582,9 +617,31 @@ export function createExpresswayEngine(
 
   function buildRoadPoints(): void {
     roadPoints.length = 0;
-    for (let index = 0; index <= roadSliceCount; index += 1) {
-      const t = index / roadSliceCount;
-      const z = NEAR_DISTANCE + (FAR_DISTANCE - NEAR_DISTANCE) * t ** 1.34;
+    const profile = quality === "MOBILE"
+      ? [
+          [80, 1.3],
+          [240, 2.8],
+          [600, 6],
+          [1100, 13],
+          [FAR_DISTANCE, 25],
+        ] as const
+      : quality === "BALANCED"
+        ? [
+            [80, 0.85],
+            [240, 1.8],
+            [600, 4],
+            [1100, 9],
+            [FAR_DISTANCE, 18],
+          ] as const
+        : [
+            [80, 0.6],
+            [240, 1.4],
+            [600, 3.2],
+            [1100, 7],
+            [FAR_DISTANCE, 14],
+          ] as const;
+
+    const appendPoint = (z: number): void => {
       const projected = projectedAt(z);
       roadPoints.push({
         z,
@@ -593,20 +650,42 @@ export function createExpresswayEngine(
         y: projected.groundY,
         scale: projected.scale,
       });
+    };
+
+    // Samples are locked to absolute road metres. Camera-relative samples
+    // slide under the scene every frame and make walls/decks visibly crawl.
+    appendPoint(NEAR_DISTANCE);
+    let bandStart = NEAR_DISTANCE;
+    for (const [bandEnd, spacing] of profile) {
+      const worldStart = totalDistanceMeters + bandStart;
+      const worldEnd = totalDistanceMeters + bandEnd;
+      let world = Math.ceil(worldStart / spacing) * spacing;
+      while (world < worldEnd - 0.0001) {
+        const z = world - totalDistanceMeters;
+        if (z > NEAR_DISTANCE + 0.0001) appendPoint(z);
+        world += spacing;
+      }
+      bandStart = bandEnd;
     }
+    appendPoint(FAR_DISTANCE);
+  }
+
+  function clearGlowLayer(layer: DrawingLayer): void {
+    const glowContext = layer.context;
+    glowContext.save();
+    glowContext.setTransform(1, 0, 0, 1, 0, 0);
+    glowContext.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    glowContext.restore();
   }
 
   function clearGlow(): void {
-    const glowContext = glowLayer.context;
-    glowContext.save();
-    glowContext.setTransform(1, 0, 0, 1, 0, 0);
-    glowContext.clearRect(0, 0, glowLayer.canvas.width, glowLayer.canvas.height);
-    glowContext.restore();
+    clearGlowLayer(glowLayer);
+    clearGlowLayer(sceneGlowLayer);
   }
 
   function occludeGlowPolygon(points: ReadonlyArray<readonly [number, number]>): void {
     if (points.length < 3) return;
-    const glowContext = glowLayer.context;
+    const glowContext = activeGlowLayer.context;
     glowContext.save();
     glowContext.globalCompositeOperation = "destination-out";
     glowContext.globalAlpha = 1;
@@ -617,7 +696,7 @@ export function createExpresswayEngine(
 
   function occludeGlowRect(x: number, y: number, width: number, height: number): void {
     if (width <= 0 || height <= 0) return;
-    const glowContext = glowLayer.context;
+    const glowContext = activeGlowLayer.context;
     glowContext.save();
     glowContext.globalCompositeOperation = "destination-out";
     glowContext.globalAlpha = 1;
@@ -636,7 +715,7 @@ export function createExpresswayEngine(
     if (x < -radius || x > cssWidth + radius || y < -radius || y > cssHeight + radius) {
       return;
     }
-    const glowContext = glowLayer.context;
+    const glowContext = activeGlowLayer.context;
     const gradient = glowContext.createRadialGradient(x, y, 0, x, y, radius);
     gradient.addColorStop(0, innerColor);
     gradient.addColorStop(0.24, innerColor);
@@ -671,7 +750,12 @@ export function createExpresswayEngine(
     context.fillRect(0, horizon - cssHeight * 0.22, cssWidth, cssHeight * 0.52);
   }
 
-  function drawBuilding(index: number, side: -1 | 1, z: number): void {
+  function drawBuilding(
+    index: number,
+    side: -1 | 1,
+    z: number,
+    collectGlowMask = false,
+  ): void {
     if (z < NEAR_DISTANCE || z > CITY_FAR_DISTANCE) return;
     const location = locationIndex(totalDistanceMeters + z);
     const occupancy = seeded(index * 2 + (side > 0 ? 1 : 0), 101);
@@ -725,6 +809,14 @@ export function createExpresswayEngine(
       [side > 0 ? left + width + depth : left - depth, base.groundY],
       [side > 0 ? left + width : left, base.groundY],
     ];
+
+    if (collectGlowMask) {
+      buildingGlowMasks.push({
+        z,
+        rect: { x: left, y: top, width, height: height + 2 },
+        sideFace,
+      });
+    }
 
     // The glow buffer is composited after the entire scene. Punch the complete
     // opaque building silhouette out of it before adding this building's own
@@ -888,14 +980,39 @@ export function createExpresswayEngine(
         context.beginPath();
         context.rect(left + 1, top + 1, Math.max(0, width - 2), Math.max(0, height - 2));
         context.clip();
-        context.drawImage(sign.canvas, boardX, boardY, boardWidth, boardHeight);
-        context.restore();
-        drawGlowDot(
-          boardX + boardWidth * 0.5,
-          boardY + boardHeight * 0.5,
-          boardWidth * 0.55,
-          signGlowColor(sign.family, 0.1 * advertisingVisibility),
+        context.fillStyle = sign.backgroundColor;
+        context.fillRect(boardX, boardY, boardWidth, boardHeight);
+        const detailVisibility = smoothstep(
+          4,
+          13,
+          Math.max(boardWidth, boardHeight) * pixelRatio,
         );
+        context.globalAlpha =
+          atmosphericAlpha * advertisingVisibility * detailVisibility;
+        context.drawImage(
+          selectSignMipmap(sign, boardWidth, boardHeight),
+          boardX,
+          boardY,
+          boardWidth,
+          boardHeight,
+        );
+        context.restore();
+        const glowVisibility = smoothstep(
+          2.5,
+          10,
+          Math.max(boardWidth, boardHeight) * pixelRatio,
+        );
+        if (glowVisibility > 0.002) {
+          drawGlowDot(
+            boardX + boardWidth * 0.5,
+            boardY + boardHeight * 0.5,
+            boardWidth * 0.55,
+            signGlowColor(
+              sign.family,
+              0.1 * advertisingVisibility * glowVisibility,
+            ),
+          );
+        }
       }
     }
 
@@ -918,6 +1035,7 @@ export function createExpresswayEngine(
   }
 
   function drawCity(): void {
+    buildingGlowMasks.length = 0;
     const landmarkOptions: ProceduralLandmarkOptions = {
       totalDistanceMeters,
       sceneLength: SCENE_LENGTH,
@@ -984,7 +1102,7 @@ export function createExpresswayEngine(
     cityLayerItems.sort((firstItem, secondItem) => secondItem.z - firstItem.z);
     for (const item of cityLayerItems) {
       if (item.kind === "building") {
-        drawBuilding(item.index, item.side, item.z);
+        drawBuilding(item.index, item.side, item.z, true);
       } else if (item.kind === "landmark") {
         drawProceduralLandmark(
           context,
@@ -996,6 +1114,7 @@ export function createExpresswayEngine(
         drawElevatedDeckSlice(item);
       }
     }
+    buildingGlowMasks.sort((first, second) => second.z - first.z);
   }
 
   function redrawForegroundBuildingOccluders(z: number): void {
@@ -1063,11 +1182,10 @@ export function createExpresswayEngine(
   function drawRoadSurfaceSlice(
     far: RoadPoint,
     near: RoadPoint,
-    sliceIndex: number,
   ): void {
     const farOuter = (ROAD_HALF_WIDTH + 1.18) * far.scale;
     const nearOuter = (ROAD_HALF_WIDTH + 1.18) * near.scale;
-    context.fillStyle = sliceIndex % 2 === 0 ? "#22282b" : "#202629";
+    context.fillStyle = "#202629";
     fillPolygon(context, [
       [far.center - farOuter, far.y],
       [far.center + farOuter, far.y],
@@ -1077,12 +1195,7 @@ export function createExpresswayEngine(
 
     const farRoad = ROAD_HALF_WIDTH * far.scale;
     const nearRoad = ROAD_HALF_WIDTH * near.scale;
-    const asphaltBand = hashInteger(Math.floor((far.world + near.world) * 0.065)) & 3;
-    context.fillStyle = asphaltBand === 0
-      ? "#171b1e"
-      : asphaltBand === 1
-        ? "#191d20"
-        : "#181c1f";
+    context.fillStyle = "#181c1f";
     fillPolygon(context, [
       [far.center - farRoad, far.y],
       [far.center + farRoad, far.y],
@@ -1499,6 +1612,8 @@ export function createExpresswayEngine(
     fillPolygon(context, deckBody);
     context.strokeStyle = "rgba(137, 153, 159, 0.45)";
     context.lineWidth = clamp(near.scale * 0.1, 0.45, 2.4);
+    context.lineCap = "round";
+    context.lineJoin = "round";
     context.beginPath();
     context.moveTo(farCenter + farHalf, farY);
     context.lineTo(nearCenter + nearHalf, nearY);
@@ -1631,7 +1746,7 @@ export function createExpresswayEngine(
       if (distance > 0.08) {
         const trailLength = Math.min(7.5, distance);
         const ratio = trailLength / distance;
-        const glowContext = glowLayer.context;
+        const glowContext = activeGlowLayer.context;
         glowContext.save();
         glowContext.globalAlpha = 0.14 * visibility;
         glowContext.strokeStyle = cool ? "rgba(155, 224, 250, 0.72)" : "rgba(255, 156, 78, 0.7)";
@@ -1770,7 +1885,9 @@ export function createExpresswayEngine(
         b: 0,
         c: 0,
         d: thickness / 512,
-        e: base.x - deckHalfWidth,
+        // Keep the repeat origin on the physical centreline. Using the
+        // viewport-filling left edge made the texture slide as that edge grew.
+        e: base.x,
         f: deckY,
       });
       context.fillStyle = metalPattern;
@@ -1791,8 +1908,12 @@ export function createExpresswayEngine(
 
     context.strokeStyle = "rgba(121, 137, 144, 0.42)";
     context.lineWidth = clamp(base.scale * 0.18, 0.5, 3);
+    context.lineCap = "round";
     const ribSpacing = Math.max(7, base.scale * 3.8);
-    for (let x = base.x - deckHalfWidth; x < base.x + deckHalfWidth; x += ribSpacing) {
+    const firstRib = Math.floor(-deckHalfWidth / ribSpacing);
+    const lastRib = Math.ceil(deckHalfWidth / ribSpacing);
+    for (let rib = firstRib; rib <= lastRib; rib += 1) {
+      const x = base.x + rib * ribSpacing;
       context.beginPath();
       context.moveTo(x, deckY + thickness * 0.15);
       context.lineTo(x + thickness * 0.35, deckY + thickness * 0.88);
@@ -1868,19 +1989,37 @@ export function createExpresswayEngine(
     }
     context.stroke();
 
-    context.drawImage(sign.canvas, boardX, boardY, boardWidth, boardHeight);
+    context.fillStyle = sign.backgroundColor;
+    context.fillRect(boardX, boardY, boardWidth, boardHeight);
+    const projectedMax = Math.max(boardWidth, boardHeight) * pixelRatio;
+    const detailVisibility = smoothstep(5, 14, projectedMax);
+    if (detailVisibility > 0.002) {
+      context.globalAlpha = visibility * detailVisibility;
+      context.drawImage(
+        selectSignMipmap(sign, boardWidth, boardHeight),
+        boardX,
+        boardY,
+        boardWidth,
+        boardHeight,
+      );
+    }
+    context.globalAlpha = visibility;
     context.strokeStyle = "rgba(221, 232, 225, 0.46)";
     context.lineWidth = clamp(base.scale * 0.055, 0.35, 1.8);
+    context.globalAlpha = visibility * smoothstep(1.8, 7, projectedMax);
     context.strokeRect(boardX, boardY, boardWidth, boardHeight);
-    glowLayer.context.save();
-    glowLayer.context.globalAlpha = visibility;
-    drawGlowDot(
-      base.x,
-      signCenterY,
-      clamp(boardWidth * 0.62, 8, 72),
-      signGlowColor(sign.family, 0.11),
-    );
-    glowLayer.context.restore();
+    const glowVisibility = smoothstep(2.5, 11, projectedMax);
+    if (glowVisibility > 0.002) {
+      activeGlowLayer.context.save();
+      activeGlowLayer.context.globalAlpha = visibility * glowVisibility;
+      drawGlowDot(
+        base.x,
+        signCenterY,
+        clamp(boardWidth * 0.62, 8, 72),
+        signGlowColor(sign.family, 0.11),
+      );
+      activeGlowLayer.context.restore();
+    }
     context.restore();
   }
 
@@ -2092,6 +2231,47 @@ export function createExpresswayEngine(
     const nearX = near.center + lateral * near.scale;
     const farTop = far.y - wallHeight * far.scale;
     const nearTop = near.y - wallHeight * near.scale;
+    const extendLine = (
+      farLineX: number,
+      farLineY: number,
+      nearLineX: number,
+      nearLineY: number,
+    ): readonly [number, number, number, number] => {
+      const length = Math.max(0.001, Math.hypot(nearLineX - farLineX, nearLineY - farLineY));
+      const overlap = 0.72;
+      const unitX = (nearLineX - farLineX) / length;
+      const unitY = (nearLineY - farLineY) / length;
+      return [
+        farLineX - unitX * overlap,
+        farLineY - unitY * overlap,
+        nearLineX + unitX * overlap,
+        nearLineY + unitY * overlap,
+      ];
+    };
+    const [farBaseX, farBaseY, nearBaseX, nearBaseY] = extendLine(
+      farX,
+      far.y,
+      nearX,
+      near.y + 0.28,
+    );
+    const [farEdgeX, farEdgeY, nearEdgeX, nearEdgeY] = extendLine(
+      farX,
+      farTop,
+      nearX,
+      nearTop,
+    );
+    const wallPolygon: ReadonlyArray<readonly [number, number]> = [
+      [farBaseX, farBaseY],
+      [farEdgeX, farEdgeY],
+      [nearEdgeX, nearEdgeY],
+      [nearBaseX, nearBaseY],
+    ];
+    const texturePolygon: ReadonlyArray<readonly [number, number]> = [
+      [farX, far.y],
+      [farX, farTop],
+      [nearX, nearTop],
+      [nearX, near.y + 0.28],
+    ];
     const projectedHeight = wallHeight * near.scale;
     const visibility =
       alpha *
@@ -2102,16 +2282,10 @@ export function createExpresswayEngine(
     context.save();
     context.globalAlpha = visibility;
     context.fillStyle = color;
-    fillPolygon(context, [
-      [farX, far.y],
-      [farX, farTop],
-      [nearX, nearTop],
-      [nearX, near.y + 0.28],
-    ]);
+    fillPolygon(context, wallPolygon);
     const textureVisibility = farFade(near.z, 600, 920) * 0.27;
     if (texture && textureVisibility > 0.001) {
       context.globalAlpha = visibility * textureVisibility;
-      const isSoundwallTexture = texture === soundwallPattern;
       transformWallPattern(
         texture,
         far,
@@ -2120,28 +2294,24 @@ export function createExpresswayEngine(
         512,
         512,
         wallHeight,
-        isSoundwallTexture ? 8.4 : 4,
-        isSoundwallTexture ? wallHeight : 1.8,
+        4,
+        1.8,
       );
       context.fillStyle = texture;
-      fillPolygon(context, [
-        [farX, far.y],
-        [farX, farTop],
-        [nearX, nearTop],
-        [nearX, near.y + 0.28],
-      ]);
+      fillPolygon(context, texturePolygon);
     }
     context.globalAlpha = visibility;
     context.strokeStyle = "rgba(204, 216, 218, 0.58)";
     context.lineWidth = clamp(near.scale * 0.065, 0.42, 2.2);
+    context.lineCap = "round";
     context.beginPath();
-    context.moveTo(farX, farTop);
-    context.lineTo(nearX, nearTop);
+    context.moveTo(farEdgeX, farEdgeY);
+    context.lineTo(nearEdgeX, nearEdgeY);
     context.stroke();
     context.restore();
   }
 
-  function drawBarrierSlice(far: RoadPoint, near: RoadPoint, sliceIndex: number): void {
+  function drawBarrierSlice(far: RoadPoint, near: RoadPoint): void {
     if (far.z <= near.z + 0.0001) return;
     const world = (far.world + near.world) * 0.5;
     const location = locationIndex(world);
@@ -2202,7 +2372,11 @@ export function createExpresswayEngine(
         context.save();
         context.globalAlpha = chevronVisibility;
         context.fillStyle = "rgba(188, 41, 31, 0.94)";
-        const reverse = ((sliceIndex + (side > 0 ? 1 : 0)) & 1) === 0;
+        // Chevron direction is tied to a fixed real-world panel cell. Using
+        // the adaptive mesh index made the motif crawl whenever LOD changed.
+        const reverse = (
+          (Math.floor(world / 9.6) + (side > 0 ? 1 : 0)) & 1
+        ) === 0;
         fillPolygon(context, reverse ? [
           [farX, lerp(farTop, far.y, 0.08)],
           [nearX, lerp(nearTop, near.y, 0.47)],
@@ -2224,9 +2398,12 @@ export function createExpresswayEngine(
           near,
           side,
           wallHeight,
-          "rgba(67, 82, 90, 0.9)",
-          soundwallPattern,
-          0.88,
+          "#43525a",
+          // Perspective-critical panels use geometric posts and a solid body.
+          // An affine repeated texture creates diagonal wedges on a tapered
+          // wall, even when the wall mesh itself is continuous.
+          null,
+          1,
         );
         const soundPostVisibility = farFade(near.z, 490, 820);
         if (
@@ -2252,16 +2429,34 @@ export function createExpresswayEngine(
 
   function drawDepthScene(): void {
     let objectIndex = 0;
+    let maskIndex = 0;
+    const applyBuildingMasksThrough = (z: number): void => {
+      while (
+        maskIndex < buildingGlowMasks.length &&
+        buildingGlowMasks[maskIndex].z > z
+      ) {
+        const mask = buildingGlowMasks[maskIndex];
+        occludeGlowRect(
+          mask.rect.x,
+          mask.rect.y,
+          mask.rect.width,
+          mask.rect.height,
+        );
+        occludeGlowPolygon(mask.sideFace);
+        maskIndex += 1;
+      }
+    };
     for (let index = roadPoints.length - 1; index >= 1; index -= 1) {
       const far = roadPoints[index];
       const near = roadPoints[index - 1];
 
       while (objectIndex < sceneObjects.length && sceneObjects[objectIndex].z > far.z) {
+        applyBuildingMasksThrough(sceneObjects[objectIndex].z);
         drawSceneObject(sceneObjects[objectIndex]);
         objectIndex += 1;
       }
 
-      drawRoadSurfaceSlice(far, near, index);
+      drawRoadSurfaceSlice(far, near);
       drawRoadMarkingsSlice(far, near);
 
       let barrierFar = far;
@@ -2271,14 +2466,16 @@ export function createExpresswayEngine(
         const barrierSplit = roadPointAt(
           clamp(object.z, near.z, barrierFar.z),
         );
-        drawBarrierSlice(barrierFar, barrierSplit, index);
+        drawBarrierSlice(barrierFar, barrierSplit);
+        applyBuildingMasksThrough(object.z);
         drawSceneObject(object);
         barrierFar = barrierSplit;
         objectIndex += 1;
       }
 
-      drawBarrierSlice(barrierFar, near, index);
+      drawBarrierSlice(barrierFar, near);
     }
+    applyBuildingMasksThrough(-Infinity);
 
     for (const [key, trail] of lightTrailPositions) {
       if (frameNumber - trail.frame > 3) lightTrailPositions.delete(key);
@@ -2339,30 +2536,34 @@ export function createExpresswayEngine(
     context.globalCompositeOperation = "screen";
     context.globalAlpha = quality === "MOBILE" ? 0.68 : 0.82;
     context.filter = `blur(${Math.max(3, Math.round(pixelRatio * (quality === "MOBILE" ? 4 : 7)))}px)`;
-    context.drawImage(
-      glowLayer.canvas,
-      0,
-      0,
-      glowLayer.canvas.width,
-      glowLayer.canvas.height,
-      0,
-      0,
-      canvas.width,
-      canvas.height,
-    );
+    for (const layer of [glowLayer, sceneGlowLayer]) {
+      context.drawImage(
+        layer.canvas,
+        0,
+        0,
+        layer.canvas.width,
+        layer.canvas.height,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
+    }
     context.filter = "none";
     context.globalAlpha = 0.28;
-    context.drawImage(
-      glowLayer.canvas,
-      0,
-      0,
-      glowLayer.canvas.width,
-      glowLayer.canvas.height,
-      0,
-      0,
-      canvas.width,
-      canvas.height,
-    );
+    for (const layer of [glowLayer, sceneGlowLayer]) {
+      context.drawImage(
+        layer.canvas,
+        0,
+        0,
+        layer.canvas.width,
+        layer.canvas.height,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
+    }
     context.restore();
     configureContextTransforms();
   }
@@ -2412,9 +2613,11 @@ export function createExpresswayEngine(
     if (destroyed || cssWidth <= 0 || cssHeight <= 0) return;
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     clearGlow();
+    activeGlowLayer = glowLayer;
     drawSky();
     buildRoadPoints();
     drawCity();
+    activeGlowLayer = sceneGlowLayer;
     collectSceneObjects();
     drawDepthScene();
     drawHeadlightReflections();
