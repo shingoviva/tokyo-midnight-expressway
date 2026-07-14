@@ -899,7 +899,6 @@ function drawRainbowBridge(
   const scale = projectedScale(options, instance);
   const heightPixels = projectedHeight(options, instance, totalHeight);
   const detailAlpha = smoothstep(28, 82, heightPixels);
-  const fineAlpha = smoothstep(60, 142, heightPixels);
   const landmarkAlpha = context.globalAlpha;
   const glowAlpha = glow.globalAlpha * instance.alpha;
   // The anchor is the near main tower. The two approaches and 570m center
@@ -989,7 +988,7 @@ function drawRainbowBridge(
     context.fillStyle = structureColor;
     for (const side of [-1, 1] as const) {
       const baseCenter = side * 10.2;
-      const topCenter = side * 7.2;
+      const topCenter = side * deckHalfWidth;
       fillPolygon(context, [
         projectedPoint(options, instance, baseCenter - 1.25, 0, zOffset),
         projectedPoint(options, instance, topCenter - 0.75, 56, zOffset),
@@ -1003,7 +1002,7 @@ function drawRainbowBridge(
       : "rgba(224, 237, 239, 0.92)";
     context.lineWidth = clamp(towerScale * 0.78, 0.75, 4.6);
     for (const height of [31, 48, 56]) {
-      const halfWidth = lerp(9.8, 7.3, height / 56);
+      const halfWidth = lerp(10.35, 9.35, height / 56);
       strokePolyline(context, [
         projectedPoint(options, instance, -halfWidth, height, zOffset),
         projectedPoint(options, instance, halfWidth, height, zOffset),
@@ -1013,8 +1012,8 @@ function drawRainbowBridge(
     context.globalAlpha = landmarkAlpha * detailAlpha;
     context.lineWidth = clamp(towerScale * 0.22, 0.45, 1.55);
     for (const [low, high] of [[7, 20], [20, 31], [31, 43], [43, 55]] as const) {
-      const lowHalf = lerp(10.1, 7.3, low / 56);
-      const highHalf = lerp(10.1, 7.3, high / 56);
+      const lowHalf = lerp(10.15, deckHalfWidth, low / 56);
+      const highHalf = lerp(10.15, deckHalfWidth, high / 56);
       strokePolyline(context, [
         projectedPoint(options, instance, -lowHalf, low, zOffset),
         projectedPoint(options, instance, highHalf, high, zOffset),
@@ -1109,7 +1108,7 @@ function drawRainbowBridge(
         projectedPoint(
           options,
           instance,
-          side * (deckHalfWidth + 0.45),
+          side * deckHalfWidth,
           cableHeight(zOffset),
           zOffset,
         ),
@@ -1120,23 +1119,26 @@ function drawRainbowBridge(
       context.lineWidth = clamp(scale * 0.58, 0.65, 3.5);
       strokePolyline(context, cablePoints);
 
-      context.globalAlpha = landmarkAlpha * fineAlpha;
+      const hangerAlpha = smoothstep(38, 92, heightPixels);
+      context.globalAlpha = landmarkAlpha * hangerAlpha;
       context.strokeStyle = "rgba(164, 195, 203, 0.73)";
-      context.lineWidth = clamp(scale * 0.18, 0.4, 1.3);
-      const hangerStep = detailLevel(options.quality, 45, 32, 24);
-      for (
-        let zOffset = nearApproach + hangerStep;
-        zOffset < farOffset;
-        zOffset += hangerStep
-      ) {
+      context.lineWidth = clamp(scale * 0.2, 0.45, 1.45);
+      const hangerStep = detailLevel(options.quality, 30, 21, 16);
+      const firstHanger = Math.ceil((nearApproach + 1) / hangerStep) * hangerStep;
+      for (let zOffset = firstHanger; zOffset < farOffset; zOffset += hangerStep) {
         if (zOffset < nearOffset) continue;
+        if (towerOffsets.some((towerOffset) => Math.abs(zOffset - towerOffset) < 4)) {
+          continue;
+        }
+        const hangerTop = cableHeight(zOffset);
+        if (hangerTop <= deckTop + 0.7) continue;
         strokePolyline(context, [
           projectedPoint(options, instance, side * deckHalfWidth, deckTop, zOffset),
           projectedPoint(
             options,
             instance,
-            side * (deckHalfWidth + 0.45),
-            cableHeight(zOffset),
+            side * deckHalfWidth,
+            hangerTop,
             zOffset,
           ),
         ]);
@@ -1182,7 +1184,7 @@ function drawRainbowBridge(
   for (const zOffset of towerOffsets) {
     if (instance.z + zOffset <= LANDMARK_NEAR_CLIP) continue;
     for (const side of [-1, 1] as const) {
-      const beacon = projectedPoint(options, instance, side * 7.2, 57.2, zOffset);
+      const beacon = projectedPoint(options, instance, side * deckHalfWidth, 57.2, zOffset);
       options.glowDot(
         beacon.x,
         beacon.y,

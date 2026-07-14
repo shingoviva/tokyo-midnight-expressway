@@ -73,7 +73,15 @@ type SceneObject =
 
 type CityLayerItem =
   | { kind: "building"; z: number; index: number; side: -1 | 1 }
-  | { kind: "landmark"; z: number; landmark: ProceduralLandmarkInstance };
+  | { kind: "landmark"; z: number; landmark: ProceduralLandmarkInstance }
+  | {
+      kind: "elevated";
+      z: number;
+      spec: ElevatedSpanSpec;
+      block: number;
+      nearWorld: number;
+      farWorld: number;
+    };
 
 type ElevatedSpanSpec = {
   level: 0 | 1;
@@ -351,6 +359,7 @@ export function createExpresswayEngine(
 
   const roadPoints: RoadPoint[] = [];
   const sceneObjects: SceneObject[] = [];
+  const cityLayerItems: CityLayerItem[] = [];
   const vehicles: TrafficVehicle[] = [];
   const lightTrailPositions = new Map<
     number,
@@ -595,6 +604,28 @@ export function createExpresswayEngine(
     glowContext.restore();
   }
 
+  function occludeGlowPolygon(points: ReadonlyArray<readonly [number, number]>): void {
+    if (points.length < 3) return;
+    const glowContext = glowLayer.context;
+    glowContext.save();
+    glowContext.globalCompositeOperation = "destination-out";
+    glowContext.globalAlpha = 1;
+    glowContext.fillStyle = "#000";
+    fillPolygon(glowContext, points);
+    glowContext.restore();
+  }
+
+  function occludeGlowRect(x: number, y: number, width: number, height: number): void {
+    if (width <= 0 || height <= 0) return;
+    const glowContext = glowLayer.context;
+    glowContext.save();
+    glowContext.globalCompositeOperation = "destination-out";
+    glowContext.globalAlpha = 1;
+    glowContext.fillStyle = "#000";
+    glowContext.fillRect(x, y, width, height);
+    glowContext.restore();
+  }
+
   function drawGlowDot(
     x: number,
     y: number,
@@ -676,7 +707,7 @@ export function createExpresswayEngine(
 
     const left = base.x - width * 0.5;
     const top = base.groundY - height;
-    const bodyLightness = Math.round(8 + seeded(index, 181) * 8);
+    const bodyLightness = Math.round(5 + seeded(index, 181) * 8);
     const skylineBlend = smoothstep(1850, CITY_FAR_DISTANCE, z);
     const skylineColor = (red: number, green: number, blue: number): string => {
       const skylineRed = Math.round(lerp(red, 5, skylineBlend));
@@ -687,6 +718,20 @@ export function createExpresswayEngine(
     // Keep the complete building mass opaque. Atmospheric depth is expressed
     // through colour lift instead of making distant towers look translucent.
     const atmosphericAlpha = 1;
+    const depth = width * (0.12 + seeded(index, 193) * 0.12);
+    const sideFace: ReadonlyArray<readonly [number, number]> = [
+      [side > 0 ? left + width : left, top],
+      [side > 0 ? left + width + depth : left - depth, top + depth * 0.22],
+      [side > 0 ? left + width + depth : left - depth, base.groundY],
+      [side > 0 ? left + width : left, base.groundY],
+    ];
+
+    // The glow buffer is composited after the entire scene. Punch the complete
+    // opaque building silhouette out of it before adding this building's own
+    // lights, otherwise distant landmarks appear to shine through the facade.
+    occludeGlowRect(left, top, width, height + 2);
+    occludeGlowPolygon(sideFace);
+
     context.globalAlpha = atmosphericAlpha;
     const facadeGradient = context.createLinearGradient(left, 0, left + width, 0);
     facadeGradient.addColorStop(
@@ -703,7 +748,7 @@ export function createExpresswayEngine(
     );
     context.fillStyle = facadeGradient;
     context.fillRect(left, top, width, height + 2);
-    const facadeTextureVisibility = 0.16 * farFade(z, 620, 930);
+    const facadeTextureVisibility = 0.21 * farFade(z, 700, 1060);
     if (concretePattern && facadeTextureVisibility > 0.001) {
       context.save();
       context.globalAlpha = atmosphericAlpha * facadeTextureVisibility;
@@ -720,16 +765,10 @@ export function createExpresswayEngine(
       context.restore();
     }
 
-    const depth = width * (0.12 + seeded(index, 193) * 0.12);
     context.fillStyle = side > 0
       ? skylineColor(5, 9, 13)
       : skylineColor(13, 18, 22);
-    fillPolygon(context, [
-      [side > 0 ? left + width : left, top],
-      [side > 0 ? left + width + depth : left - depth, top + depth * 0.22],
-      [side > 0 ? left + width + depth : left - depth, base.groundY],
-      [side > 0 ? left + width : left, base.groundY],
-    ]);
+    fillPolygon(context, sideFace);
 
     const roofAccent = seeded(index, 211);
     if (roofAccent > 0.58 && width > 7) {
@@ -890,11 +929,14 @@ export function createExpresswayEngine(
       glowDot: drawGlowDot,
     };
     const landmarks = collectProceduralLandmarks(landmarkOptions);
-    const cityItems: CityLayerItem[] = landmarks.map((landmark) => ({
-      kind: "landmark" as const,
-      z: landmark.z,
-      landmark,
-    }));
+    cityLayerItems.length = 0;
+    for (const landmark of landmarks) {
+      cityLayerItems.push({
+        kind: "landmark",
+        z: landmark.z,
+        landmark,
+      });
+    }
     // Site reservations are anchored in world space, so buildings never pop
     // back when a landmark instance leaves the camera frustum.
     const landmarkSites = collectProceduralLandmarkSites(
@@ -930,25 +972,40 @@ export function createExpresswayEngine(
       const world = index * spacing + (seeded(index, 307) - 0.5) * spacing * 0.58;
       const z = world - totalDistanceMeters;
       if (!reservesLandmarkSite(world, -1)) {
-        cityItems.push({ kind: "building", z, index, side: -1 });
+        cityLayerItems.push({ kind: "building", z, index, side: -1 });
       }
       const rightZ = z + (seeded(index, 311) - 0.5) * 14;
       if (!reservesLandmarkSite(totalDistanceMeters + rightZ, 1)) {
-        cityItems.push({ kind: "building", z: rightZ, index, side: 1 });
+        cityLayerItems.push({ kind: "building", z: rightZ, index, side: 1 });
       }
     }
 
-    cityItems.sort((firstItem, secondItem) => secondItem.z - firstItem.z);
-    for (const item of cityItems) {
+    collectElevatedLayerItems(cityLayerItems);
+    cityLayerItems.sort((firstItem, secondItem) => secondItem.z - firstItem.z);
+    for (const item of cityLayerItems) {
       if (item.kind === "building") {
         drawBuilding(item.index, item.side, item.z);
-      } else {
+      } else if (item.kind === "landmark") {
         drawProceduralLandmark(
           context,
           glowLayer.context,
           landmarkOptions,
           item.landmark,
         );
+      } else {
+        drawElevatedDeckSlice(item);
+      }
+    }
+  }
+
+  function redrawForegroundBuildingOccluders(z: number): void {
+    for (const item of cityLayerItems) {
+      if (
+        item.kind === "building" &&
+        item.z < z - 0.001 &&
+        item.z >= NEAR_DISTANCE
+      ) {
+        drawBuilding(item.index, item.side, item.z);
       }
     }
   }
@@ -1033,7 +1090,7 @@ export function createExpresswayEngine(
       [near.center - nearRoad, near.y + 0.8],
     ]);
 
-    const textureVisibility = farFade(far.z, 650, 1100) * 0.22;
+    const textureVisibility = farFade(far.z, 720, 1180) * 0.32;
     if (asphaltPattern && textureVisibility > 0.001) {
       context.save();
       context.globalAlpha = textureVisibility;
@@ -1082,25 +1139,6 @@ export function createExpresswayEngine(
       context.restore();
     }
 
-    const trackVisibility = farFade(near.z, 470, 760) * 0.13;
-    if (trackVisibility > 0.001) {
-      context.save();
-      context.globalAlpha = trackVisibility;
-      for (const lateral of [-2.05, 2.05]) {
-        drawClippedRoadMarking(
-          far,
-          near,
-          near.world,
-          far.world,
-          lateral,
-          lateral,
-          0.11,
-          0.11,
-          "rgba(4, 7, 8, 0.58)",
-        );
-      }
-      context.restore();
-    }
   }
 
   function drawRoadMarkingsSlice(far: RoadPoint, near: RoadPoint): void {
@@ -1313,6 +1351,18 @@ export function createExpresswayEngine(
       base.x + Math.max(columnWidth, capWidth) < -30 ||
       base.x - Math.max(columnWidth, capWidth) > cssWidth + 30
     ) return;
+    occludeGlowRect(
+      base.x - columnWidth * 0.5,
+      top.y,
+      columnWidth,
+      Math.max(0, base.groundY - top.y),
+    );
+    occludeGlowRect(
+      base.x - capWidth * 0.5,
+      top.y - capHeight * base.scale,
+      capWidth,
+      capHeight * base.scale,
+    );
     context.save();
     context.fillStyle = terminal ? "#4a5559" : "#3d474b";
     context.fillRect(
@@ -1339,7 +1389,7 @@ export function createExpresswayEngine(
     context.restore();
   }
 
-  function drawElevatedDecks(): void {
+  function collectElevatedLayerItems(target: CityLayerItem[]): void {
     const activeSpans: Array<{
       spec: ElevatedSpanSpec;
       block: number;
@@ -1357,8 +1407,6 @@ export function createExpresswayEngine(
         activeSpans.push({ spec, block, start, end });
       }
     }
-    activeSpans.sort((first, second) => second.start - first.start);
-
     for (const span of activeSpans) {
       const { spec, block, start, end } = span;
       for (let index = roadPoints.length - 1; index >= 1; index -= 1) {
@@ -1367,87 +1415,96 @@ export function createExpresswayEngine(
         const clippedNearWorld = Math.max(sliceNear.world, start);
         const clippedFarWorld = Math.min(sliceFar.world, end);
         if (clippedFarWorld <= clippedNearWorld + 0.0001) continue;
-
-        const far = roadPointAt(clippedFarWorld - totalDistanceMeters);
-        const near = roadPointAt(clippedNearWorld - totalDistanceMeters);
-        const farLocal = far.world - block * SCENE_LENGTH;
-        const nearLocal = near.world - block * SCENE_LENGTH;
-        const farState = elevatedState(spec, farLocal);
-        const nearState = elevatedState(spec, nearLocal);
-
-        const supportSpacing = 42;
-        const supportWorld = Math.floor(clippedFarWorld / supportSpacing) * supportSpacing;
-        if (supportWorld > clippedNearWorld + 0.001) {
-          drawElevatedPier(spec, block, supportWorld);
-        }
-        for (const terminalLocal of [spec.coreStart, spec.coreEnd]) {
-          const terminalWorld = block * SCENE_LENGTH + terminalLocal;
-          if (terminalWorld > clippedNearWorld && terminalWorld <= clippedFarWorld) {
-            drawElevatedPier(spec, block, terminalWorld, true);
-          }
-        }
-
-        const farY = far.y - farState.height * far.scale;
-        const nearY = near.y - nearState.height * near.scale;
-        const farCenter = far.center + farState.offset * far.scale;
-        const nearCenter = near.center + nearState.offset * near.scale;
-        const farHalf = spec.halfWidthMeters * far.scale;
-        const nearHalf = spec.halfWidthMeters * near.scale;
-        const thicknessFar = 1.08 * far.scale;
-        const thicknessNear = 1.08 * near.scale;
-
-        context.fillStyle = spec.level === 0 ? "#30383c" : "#242b2f";
-        fillPolygon(context, [
-          [farCenter - farHalf, farY],
-          [farCenter + farHalf, farY],
-          [nearCenter + nearHalf, nearY],
-          [nearCenter - nearHalf, nearY],
-        ]);
-        const deckTextureVisibility = 0.11 * farFade(near.z, 540, 880);
-        if (metalPattern && deckTextureVisibility > 0.001) {
-          context.save();
-          context.globalAlpha = deckTextureVisibility;
-          transformGroundPattern(
-            metalPattern,
-            far,
-            near,
-            farCenter,
-            farY,
-            nearCenter,
-            nearY,
-            512,
-            512,
-            spec.halfWidthMeters * 2,
-            spec.halfWidthMeters * 2,
-          );
-          context.fillStyle = metalPattern;
-          fillPolygon(context, [
-            [farCenter - farHalf, farY],
-            [farCenter + farHalf, farY],
-            [nearCenter + nearHalf, nearY],
-            [nearCenter - nearHalf, nearY],
-          ]);
-          context.restore();
-        }
-        context.fillStyle = spec.level === 0 ? "#141a1e" : "#10161a";
-        fillPolygon(context, [
-          [farCenter - farHalf, farY],
-          [farCenter + farHalf, farY],
-          [farCenter + farHalf, farY + thicknessFar],
-          [nearCenter + nearHalf, nearY + thicknessNear],
-          [nearCenter - nearHalf, nearY + thicknessNear],
-          [farCenter - farHalf, farY + thicknessFar],
-        ]);
-        context.strokeStyle = "rgba(130, 146, 151, 0.5)";
-        context.lineWidth = clamp(near.scale * 0.1, 0.45, 2.4);
-        context.beginPath();
-        context.moveTo(farCenter + farHalf, farY);
-        context.lineTo(nearCenter + nearHalf, nearY);
-        context.moveTo(farCenter - farHalf, farY);
-        context.lineTo(nearCenter - nearHalf, nearY);
-        context.stroke();
+        target.push({
+          kind: "elevated",
+          z: (clippedNearWorld + clippedFarWorld) * 0.5 - totalDistanceMeters,
+          spec,
+          block,
+          nearWorld: clippedNearWorld,
+          farWorld: clippedFarWorld,
+        });
       }
     }
+  }
+
+  function drawElevatedDeckSlice(
+    item: Extract<CityLayerItem, { kind: "elevated" }>,
+  ): void {
+    const { spec, block, nearWorld, farWorld } = item;
+    const far = roadPointAt(farWorld - totalDistanceMeters);
+    const near = roadPointAt(nearWorld - totalDistanceMeters);
+    const farState = elevatedState(spec, far.world - block * SCENE_LENGTH);
+    const nearState = elevatedState(spec, near.world - block * SCENE_LENGTH);
+
+    const supportSpacing = 42;
+    const supportWorld = Math.floor(farWorld / supportSpacing) * supportSpacing;
+    if (supportWorld > nearWorld + 0.001) {
+      drawElevatedPier(spec, block, supportWorld);
+    }
+    for (const terminalLocal of [spec.coreStart, spec.coreEnd]) {
+      const terminalWorld = block * SCENE_LENGTH + terminalLocal;
+      if (terminalWorld > nearWorld && terminalWorld <= farWorld) {
+        drawElevatedPier(spec, block, terminalWorld, true);
+      }
+    }
+
+    const farY = far.y - farState.height * far.scale;
+    const nearY = near.y - nearState.height * near.scale;
+    const farCenter = far.center + farState.offset * far.scale;
+    const nearCenter = near.center + nearState.offset * near.scale;
+    const farHalf = spec.halfWidthMeters * far.scale;
+    const nearHalf = spec.halfWidthMeters * near.scale;
+    const thicknessFar = 1.08 * far.scale;
+    const thicknessNear = 1.08 * near.scale;
+    const deckTop: ReadonlyArray<readonly [number, number]> = [
+      [farCenter - farHalf, farY],
+      [farCenter + farHalf, farY],
+      [nearCenter + nearHalf, nearY],
+      [nearCenter - nearHalf, nearY],
+    ];
+    const deckBody: ReadonlyArray<readonly [number, number]> = [
+      [farCenter - farHalf, farY],
+      [farCenter + farHalf, farY],
+      [farCenter + farHalf, farY + thicknessFar],
+      [nearCenter + nearHalf, nearY + thicknessNear],
+      [nearCenter - nearHalf, nearY + thicknessNear],
+      [farCenter - farHalf, farY + thicknessFar],
+    ];
+
+    occludeGlowPolygon(deckBody);
+    context.fillStyle = spec.level === 0 ? "#2c353a" : "#21292e";
+    fillPolygon(context, deckTop);
+    const deckTextureVisibility = 0.16 * farFade(near.z, 620, 980);
+    if (metalPattern && deckTextureVisibility > 0.001) {
+      context.save();
+      context.globalAlpha = deckTextureVisibility;
+      transformGroundPattern(
+        metalPattern,
+        far,
+        near,
+        farCenter,
+        farY,
+        nearCenter,
+        nearY,
+        512,
+        512,
+        spec.halfWidthMeters * 2,
+        spec.halfWidthMeters * 2,
+      );
+      context.fillStyle = metalPattern;
+      fillPolygon(context, deckTop);
+      context.restore();
+    }
+    context.fillStyle = spec.level === 0 ? "#11181c" : "#0d1418";
+    fillPolygon(context, deckBody);
+    context.strokeStyle = "rgba(137, 153, 159, 0.45)";
+    context.lineWidth = clamp(near.scale * 0.1, 0.45, 2.4);
+    context.beginPath();
+    context.moveTo(farCenter + farHalf, farY);
+    context.lineTo(nearCenter + nearHalf, nearY);
+    context.moveTo(farCenter - farHalf, farY);
+    context.lineTo(nearCenter - nearHalf, nearY);
+    context.stroke();
   }
 
   function collectSceneObjects(): void {
@@ -1604,8 +1661,11 @@ export function createExpresswayEngine(
     const world = totalDistanceMeters + object.z;
     const location = locationIndex(world);
     const local = locationLocal(world);
-    const visibility = farFade(object.z, FAR_DISTANCE * 0.72, FAR_DISTANCE);
-    if (visibility <= 0.002) return;
+    const detailVisibility = farFade(object.z, FAR_DISTANCE * 0.72, FAR_DISTANCE);
+    // Structural mass stays opaque at distance; haze is carried by colour and
+    // detail loss. Alpha fading made the deck look as if it passed through the
+    // buildings behind it.
+    const visibility = 1;
 
     if (location === 12 && local > 375) {
       const portalHeight = 6.8 * base.scale;
@@ -1646,7 +1706,12 @@ export function createExpresswayEngine(
           const lampX = base.x + offset * base.scale;
           context.fillStyle = "#e1f5f5";
           context.fillRect(lampX - 1.3, lampY - 0.7, 2.6, 1.4);
-          drawGlowDot(lampX, lampY, clamp(base.scale * 1.25, 4, 34), "rgba(133, 218, 236, 0.28)");
+          drawGlowDot(
+            lampX,
+            lampY,
+            clamp(base.scale * 1.25, 4, 34),
+            `rgba(133, 218, 236, ${0.28 * detailVisibility})`,
+          );
         }
         context.restore();
       }
@@ -1673,7 +1738,22 @@ export function createExpresswayEngine(
     });
     if (!deckVisible && !pierVisible) return;
 
-    const fogAlpha = clamp(1.2 - object.z / 1800, 0.32, 1) * visibility;
+    const fogAlpha = visibility;
+    occludeGlowRect(
+      base.x - deckHalfWidth,
+      deckY,
+      deckHalfWidth * 2,
+      thickness,
+    );
+    for (const lateral of [-13, 13]) {
+      const pierX = base.x + lateral * base.scale;
+      occludeGlowRect(
+        pierX - pierWidth * 0.5,
+        deckY + thickness * 0.68,
+        pierWidth,
+        Math.max(0, base.groundY - deckY - thickness * 0.68),
+      );
+    }
     context.save();
     context.globalAlpha = fogAlpha;
     const deckGradient = context.createLinearGradient(0, deckY, 0, deckY + thickness);
@@ -1725,9 +1805,19 @@ export function createExpresswayEngine(
       const y = deckY + thickness * 0.83;
       context.fillStyle = "rgba(196, 229, 238, 0.88)";
       context.fillRect(x - 1.5, y, 3, Math.max(1, base.scale * 0.12));
-      drawGlowDot(x, y, clamp(base.scale * 1.5, 5, 30), "rgba(131, 211, 238, 0.28)");
+      drawGlowDot(
+        x,
+        y,
+        clamp(base.scale * 1.5, 5, 30),
+        `rgba(131, 211, 238, ${0.28 * detailVisibility})`,
+      );
     }
     context.restore();
+
+    // Transverse decks participate in the road-slice painter pass, while the
+    // city was established earlier. Repaint only buildings that are physically
+    // closer than this deck so it cannot cut through their opaque facades.
+    redrawForegroundBuildingOccluders(object.z);
   }
 
   function drawSign(object: Extract<SceneObject, { kind: "sign" }>): void {
@@ -2210,7 +2300,7 @@ export function createExpresswayEngine(
     leftWash.addColorStop(0.38, "rgba(88, 151, 181, 0.07)");
     leftWash.addColorStop(1, "rgba(0, 0, 0, 0)");
     context.fillStyle = leftWash;
-    context.fillRect(0, horizon, cssWidth * 0.55, cssHeight - horizon);
+    context.fillRect(0, horizon, cssWidth, cssHeight - horizon);
 
     const rightWash = context.createRadialGradient(
       cssWidth * 0.88,
@@ -2223,14 +2313,23 @@ export function createExpresswayEngine(
     rightWash.addColorStop(0, "rgba(103, 172, 203, 0.12)");
     rightWash.addColorStop(1, "rgba(0, 0, 0, 0)");
     context.fillStyle = rightWash;
-    context.fillRect(cssWidth * 0.45, horizon, cssWidth * 0.55, cssHeight - horizon);
+    context.fillRect(0, horizon, cssWidth, cssHeight - horizon);
 
-    const roadSheen = context.createLinearGradient(0, horizon, 0, cssHeight);
-    roadSheen.addColorStop(0, "rgba(93, 133, 149, 0)");
-    roadSheen.addColorStop(0.58, "rgba(93, 133, 149, 0.02)");
-    roadSheen.addColorStop(1, "rgba(132, 184, 201, 0.085)");
+    // A radial pool has no hard x-boundaries, avoiding the vertical seams that
+    // the previous cropped sheen rectangle exposed at the bottom of the frame.
+    const roadSheen = context.createRadialGradient(
+      cssWidth * 0.5,
+      cssHeight * 1.04,
+      cssHeight * 0.04,
+      cssWidth * 0.5,
+      cssHeight * 1.04,
+      Math.max(cssWidth, cssHeight) * 0.7,
+    );
+    roadSheen.addColorStop(0, "rgba(139, 194, 211, 0.092)");
+    roadSheen.addColorStop(0.46, "rgba(87, 138, 158, 0.032)");
+    roadSheen.addColorStop(1, "rgba(0, 0, 0, 0)");
     context.fillStyle = roadSheen;
-    context.fillRect(cssWidth * 0.18, horizon, cssWidth * 0.64, cssHeight - horizon);
+    context.fillRect(0, horizon, cssWidth, cssHeight - horizon);
     context.restore();
   }
 
@@ -2316,7 +2415,6 @@ export function createExpresswayEngine(
     drawSky();
     buildRoadPoints();
     drawCity();
-    drawElevatedDecks();
     collectSceneObjects();
     drawDepthScene();
     drawHeadlightReflections();

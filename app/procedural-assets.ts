@@ -173,16 +173,16 @@ function drawCracks(context: Context2D, width: number, height: number, seed: num
 function createAsphalt(): CanvasLike {
   const canvas = createCanvas(512, 1024);
   const context = fillMaterial(canvas, 701, (u, v, noise, grain) => {
-    const wheel = Math.exp(-Math.pow((u - 0.27) / 0.085, 2)) + Math.exp(-Math.pow((u - 0.73) / 0.085, 2));
-    const aggregate = grain > 0.91 ? 18 : grain < 0.08 ? -12 : (grain - 0.5) * 7;
-    const patch = u > 0.07 && u < 0.39 && v > 0.34 && v < 0.61 ? -7 : 0;
-    const tone = 36 + (noise - 0.5) * 24 + aggregate - wheel * 4 + patch;
-    return [tone * 0.88, tone * 0.96, tone, 255];
+    const wheel = Math.exp(-Math.pow((u - 0.27) / 0.11, 2)) + Math.exp(-Math.pow((u - 0.73) / 0.11, 2));
+    const aggregate = grain > 0.975 ? 24 : grain < 0.035 ? -13 : (grain - 0.5) * 8;
+    const repairedArea = -5.5 * Math.exp(
+      -Math.pow((u - 0.23) / 0.2, 2) - Math.pow((v - 0.48) / 0.22, 2),
+    );
+    const fineRipples = Math.sin((u * 43 + v * 9) * Math.PI) * 0.8;
+    const tone = 32 + (noise - 0.5) * 22 + aggregate - wheel * 2.2 + repairedArea + fineRipples;
+    return [tone * 0.86, tone * 0.95, tone * 1.02, 255];
   });
-  context.strokeStyle = "rgba(78, 88, 92, .22)";
-  context.lineWidth = 2;
-  context.strokeRect(36, 350, 170, 280);
-  drawCracks(context, 512, 1024, 917, 34);
+  drawCracks(context, 512, 1024, 917, 24);
   return canvas;
 }
 
@@ -191,8 +191,10 @@ function createConcrete(): CanvasLike {
   const context = fillMaterial(canvas, 1103, (u, v, noise, grain) => {
     const streak = Math.sin(u * Math.PI * 18 + periodicNoise(59, 0, v, 1, 8) * 3) * 2;
     const speck = grain > 0.93 ? 15 : grain < 0.06 ? -12 : 0;
-    const tone = 126 + (noise - 0.5) * 31 + streak + speck;
-    return [tone * 0.9, tone * 0.94, tone * 0.96, 255];
+    const runoff = -11 * Math.pow(Math.max(0, Math.sin(u * Math.PI * 7.4 + 0.7)), 9) * (0.25 + v * 0.75);
+    const lowerGrime = -8 * smooth(Math.max(0, (v - 0.58) / 0.42));
+    const tone = 108 + (noise - 0.5) * 34 + streak + speck + runoff + lowerGrime;
+    return [tone * 0.88, tone * 0.93, tone * 0.97, 255];
   });
   context.strokeStyle = "rgba(35, 48, 54, .35)";
   context.lineWidth = 3;
