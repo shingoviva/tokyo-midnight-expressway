@@ -80,6 +80,8 @@ const TAU = Math.PI * 2;
 const LANDMARK_NEAR_CLIP = 0.12;
 const RAINBOW_BRIDGE_NEAR_APPROACH = -174;
 const RAINBOW_BRIDGE_FAR_APPROACH = 744;
+const RAINBOW_BRIDGE_ENTRY_RUNOUT = -360;
+const RAINBOW_BRIDGE_EXIT_RUNOUT = 1_040;
 
 const LANDMARK_SPECS: readonly LandmarkSpec[] = [
   {
@@ -472,7 +474,7 @@ export function collectProceduralLandmarks(
     // A longitudinal bridge remains visible after its near tower passes the
     // camera because most of the 918 m suspension structure is still ahead.
     const minimumZ = spec.kind === "rainbow-bridge"
-      ? -RAINBOW_BRIDGE_FAR_APPROACH + LANDMARK_NEAR_CLIP
+      ? -RAINBOW_BRIDGE_EXIT_RUNOUT + LANDMARK_NEAR_CLIP
       : LANDMARK_NEAR_CLIP;
     const firstBlock = Math.floor(
       (options.totalDistanceMeters + minimumZ - anchor) / sceneLength,
@@ -905,9 +907,15 @@ function drawRainbowBridge(
   // span reproduce the Port of Tokyo's 918m suspension-bridge section.
   const nearApproach = RAINBOW_BRIDGE_NEAR_APPROACH;
   const farOffset = RAINBOW_BRIDGE_FAR_APPROACH;
+  const deckEntry = RAINBOW_BRIDGE_ENTRY_RUNOUT;
+  const deckExit = RAINBOW_BRIDGE_EXIT_RUNOUT;
   const nearOffset = Math.min(
     farOffset,
     Math.max(nearApproach, LANDMARK_NEAR_CLIP - instance.z),
+  );
+  const visibleDeckNear = Math.min(
+    deckExit,
+    Math.max(deckEntry, LANDMARK_NEAR_CLIP - instance.z),
   );
   const towerOffsets = [0, 570] as const;
   const deckTop = 2.25;
@@ -917,29 +925,105 @@ function drawRainbowBridge(
   context.lineJoin = "round";
   context.globalAlpha = landmarkAlpha;
 
-  context.fillStyle = "rgba(16, 25, 30, 0.94)";
-  fillPolygon(context, [
-    projectedPoint(options, instance, -deckHalfWidth, 0, farOffset),
-    projectedPoint(options, instance, deckHalfWidth, 0, farOffset),
-    projectedPoint(options, instance, deckHalfWidth, 0, nearOffset),
-    projectedPoint(options, instance, -deckHalfWidth, 0, nearOffset),
-  ]);
+  const deckWidthAt = (zOffset: number): number => {
+    const roadJoinHalfWidth = 5.15;
+    if (zOffset < nearApproach) {
+      return lerp(
+        roadJoinHalfWidth,
+        deckHalfWidth,
+        smoothstep(deckEntry, nearApproach, zOffset),
+      );
+    }
+    if (zOffset > farOffset) {
+      return lerp(
+        deckHalfWidth,
+        roadJoinHalfWidth,
+        smoothstep(farOffset, deckExit, zOffset),
+      );
+    }
+    return deckHalfWidth;
+  };
+  const parapetHeightAt = (zOffset: number): number => {
+    const roadJoinHeight = 0.46;
+    if (zOffset < nearApproach) {
+      return lerp(
+        roadJoinHeight,
+        deckTop,
+        smoothstep(deckEntry, nearApproach, zOffset),
+      );
+    }
+    if (zOffset > farOffset) {
+      return lerp(
+        deckTop,
+        roadJoinHeight,
+        smoothstep(farOffset, deckExit, zOffset),
+      );
+    }
+    return deckTop;
+  };
+  const drawDeckSection = (sectionNear: number, sectionFar: number): void => {
+    const clippedNear = Math.max(sectionNear, visibleDeckNear);
+    const clippedFar = Math.min(sectionFar, deckExit);
+    if (clippedFar <= clippedNear + 0.001) return;
+    const nearHalfWidth = deckWidthAt(clippedNear);
+    const farHalfWidth = deckWidthAt(clippedFar);
+    const nearParapetHeight = parapetHeightAt(clippedNear);
+    const farParapetHeight = parapetHeightAt(clippedFar);
 
-  for (const side of [-1, 1] as const) {
-    context.fillStyle = "rgba(77, 91, 97, 0.95)";
+    context.fillStyle = "rgba(16, 25, 30, 0.94)";
     fillPolygon(context, [
-      projectedPoint(options, instance, side * deckHalfWidth, 0.35, farOffset),
-      projectedPoint(options, instance, side * deckHalfWidth, deckTop, farOffset),
-      projectedPoint(options, instance, side * deckHalfWidth, deckTop, nearOffset),
-      projectedPoint(options, instance, side * deckHalfWidth, 0.35, nearOffset),
+      projectedPoint(options, instance, -farHalfWidth, 0, clippedFar),
+      projectedPoint(options, instance, farHalfWidth, 0, clippedFar),
+      projectedPoint(options, instance, nearHalfWidth, 0, clippedNear),
+      projectedPoint(options, instance, -nearHalfWidth, 0, clippedNear),
     ]);
-    context.strokeStyle = "rgba(192, 215, 222, 0.76)";
-    context.lineWidth = clamp(scale * 0.22, 0.55, 2.2);
-    strokePolyline(context, [
-      projectedPoint(options, instance, side * deckHalfWidth, deckTop, farOffset),
-      projectedPoint(options, instance, side * deckHalfWidth, deckTop, nearOffset),
-    ]);
-  }
+
+    for (const side of [-1, 1] as const) {
+      context.fillStyle = "rgba(77, 91, 97, 0.95)";
+      fillPolygon(context, [
+        projectedPoint(options, instance, side * farHalfWidth, 0.35, clippedFar),
+        projectedPoint(
+          options,
+          instance,
+          side * farHalfWidth,
+          farParapetHeight,
+          clippedFar,
+        ),
+        projectedPoint(
+          options,
+          instance,
+          side * nearHalfWidth,
+          nearParapetHeight,
+          clippedNear,
+        ),
+        projectedPoint(options, instance, side * nearHalfWidth, 0.35, clippedNear),
+      ]);
+      context.strokeStyle = "rgba(192, 215, 222, 0.76)";
+      context.lineWidth = clamp(scale * 0.22, 0.55, 2.2);
+      strokePolyline(context, [
+        projectedPoint(
+          options,
+          instance,
+          side * farHalfWidth,
+          farParapetHeight,
+          clippedFar,
+        ),
+        projectedPoint(
+          options,
+          instance,
+          side * nearHalfWidth,
+          nearParapetHeight,
+          clippedNear,
+        ),
+      ]);
+    }
+  };
+
+  // Far-to-near sections preserve painter order while both ends narrow and
+  // lower into the ordinary expressway instead of being removed as one mesh.
+  drawDeckSection(farOffset, deckExit);
+  drawDeckSection(nearApproach, farOffset);
+  drawDeckSection(deckEntry, nearApproach);
 
   const drawAnchorage = (zOffset: number, pointsTowardBridge: 1 | -1): void => {
     if (instance.z + zOffset <= LANDMARK_NEAR_CLIP) return;

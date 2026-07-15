@@ -152,6 +152,7 @@ const LOCATION_NAMES = [
 const SCENE_LENGTH = LOCATION_LENGTH * LOCATION_NAMES.length;
 const LIGHT_SPACING = 36;
 const SIGN_SPACING = 560;
+const MAX_LIGHT_TRAIL_HISTORY = 96;
 
 // Longitudinal decks use real-world meter ranges. Their approaches continue
 // beyond the visible core, descend and curve behind the city instead of ending
@@ -379,6 +380,14 @@ export function createExpresswayEngine(
   let horizon = 1;
   let quality: Telemetry["quality"] = "HIGH";
   let noisePattern: CanvasPattern | null = null;
+  let noiseImageData: ImageData | null = null;
+  let skyGradientCache: CanvasGradient | null = null;
+  let horizonHazeCache: CanvasGradient | null = null;
+  let leftHeadlightWashCache: CanvasGradient | null = null;
+  let rightHeadlightWashCache: CanvasGradient | null = null;
+  let roadSheenCache: CanvasGradient | null = null;
+  let distanceFogCache: CanvasGradient | null = null;
+  let vignetteCache: CanvasGradient | null = null;
 
   let started = false;
   let destroyed = false;
@@ -564,11 +573,95 @@ export function createExpresswayEngine(
     context.imageSmoothingQuality = "high";
   }
 
+  function rebuildStaticGradients(): void {
+    skyGradientCache = context.createLinearGradient(0, 0, 0, cssHeight);
+    skyGradientCache.addColorStop(0, "#010509");
+    skyGradientCache.addColorStop(0.42, "#03090e");
+    skyGradientCache.addColorStop(0.7, "#0a1116");
+    skyGradientCache.addColorStop(1, "#11171b");
+
+    horizonHazeCache = context.createRadialGradient(
+      cssWidth * 0.52,
+      horizon,
+      0,
+      cssWidth * 0.52,
+      horizon,
+      cssWidth * 0.7,
+    );
+    horizonHazeCache.addColorStop(0, "rgba(31, 48, 57, 0.22)");
+    horizonHazeCache.addColorStop(0.45, "rgba(15, 27, 34, 0.09)");
+    horizonHazeCache.addColorStop(1, "rgba(0, 0, 0, 0)");
+
+    leftHeadlightWashCache = context.createRadialGradient(
+      cssWidth * 0.12,
+      cssHeight * 0.82,
+      0,
+      cssWidth * 0.12,
+      cssHeight * 0.82,
+      cssHeight * 0.48,
+    );
+    leftHeadlightWashCache.addColorStop(0, "rgba(128, 201, 230, 0.2)");
+    leftHeadlightWashCache.addColorStop(0.38, "rgba(88, 151, 181, 0.07)");
+    leftHeadlightWashCache.addColorStop(1, "rgba(0, 0, 0, 0)");
+
+    rightHeadlightWashCache = context.createRadialGradient(
+      cssWidth * 0.88,
+      cssHeight * 0.86,
+      0,
+      cssWidth * 0.88,
+      cssHeight * 0.86,
+      cssHeight * 0.45,
+    );
+    rightHeadlightWashCache.addColorStop(0, "rgba(103, 172, 203, 0.12)");
+    rightHeadlightWashCache.addColorStop(1, "rgba(0, 0, 0, 0)");
+
+    roadSheenCache = context.createRadialGradient(
+      cssWidth * 0.5,
+      cssHeight * 1.04,
+      cssHeight * 0.04,
+      cssWidth * 0.5,
+      cssHeight * 1.04,
+      Math.max(cssWidth, cssHeight) * 0.7,
+    );
+    roadSheenCache.addColorStop(0, "rgba(139, 194, 211, 0.092)");
+    roadSheenCache.addColorStop(0.46, "rgba(87, 138, 158, 0.032)");
+    roadSheenCache.addColorStop(1, "rgba(0, 0, 0, 0)");
+
+    distanceFogCache = context.createLinearGradient(
+      0,
+      horizon - cssHeight * 0.09,
+      0,
+      horizon + cssHeight * 0.21,
+    );
+    distanceFogCache.addColorStop(0, "rgba(18, 29, 35, 0)");
+    distanceFogCache.addColorStop(0.48, "rgba(23, 36, 42, 0.105)");
+    distanceFogCache.addColorStop(1, "rgba(15, 22, 27, 0)");
+
+    vignetteCache = context.createRadialGradient(
+      cssWidth * 0.5,
+      cssHeight * 0.5,
+      Math.min(cssWidth, cssHeight) * 0.22,
+      cssWidth * 0.5,
+      cssHeight * 0.49,
+      Math.max(cssWidth, cssHeight) * 0.72,
+    );
+    vignetteCache.addColorStop(0, "rgba(0, 0, 0, 0)");
+    vignetteCache.addColorStop(0.66, "rgba(0, 0, 0, 0.08)");
+    vignetteCache.addColorStop(1, "rgba(0, 0, 0, 0.58)");
+  }
+
   function regenerateNoise(seedOffset: number): void {
     const noiseContext = noiseLayer.context;
     const width = noiseLayer.canvas.width;
     const height = noiseLayer.canvas.height;
-    const image = noiseContext.createImageData(width, height);
+    if (
+      !noiseImageData ||
+      noiseImageData.width !== width ||
+      noiseImageData.height !== height
+    ) {
+      noiseImageData = noiseContext.createImageData(width, height);
+    }
+    const image = noiseImageData;
     for (let index = 0; index < image.data.length; index += 4) {
       const grain = hashInteger(index + seedOffset * 1973);
       const light = 104 + (grain & 63);
@@ -618,6 +711,7 @@ export function createExpresswayEngine(
       backingHeight * glowRatio,
     );
     configureContextTransforms();
+    rebuildStaticGradients();
     regenerateNoise(frameNumber);
     noisePattern = context.createPattern(noiseLayer.canvas, "repeat");
     renderFrame();
@@ -766,26 +860,11 @@ export function createExpresswayEngine(
   }
 
   function drawSky(): void {
-    const sky = context.createLinearGradient(0, 0, 0, cssHeight);
-    sky.addColorStop(0, "#010509");
-    sky.addColorStop(0.42, "#03090e");
-    sky.addColorStop(0.7, "#0a1116");
-    sky.addColorStop(1, "#11171b");
-    context.fillStyle = sky;
+    if (!skyGradientCache || !horizonHazeCache) rebuildStaticGradients();
+    context.fillStyle = skyGradientCache ?? "#02070b";
     context.fillRect(0, 0, cssWidth, cssHeight);
 
-    const horizonHaze = context.createRadialGradient(
-      cssWidth * 0.52,
-      horizon,
-      0,
-      cssWidth * 0.52,
-      horizon,
-      cssWidth * 0.7,
-    );
-    horizonHaze.addColorStop(0, "rgba(31, 48, 57, 0.22)");
-    horizonHaze.addColorStop(0.45, "rgba(15, 27, 34, 0.09)");
-    horizonHaze.addColorStop(1, "rgba(0, 0, 0, 0)");
-    context.fillStyle = horizonHaze;
+    context.fillStyle = horizonHazeCache ?? "rgba(0, 0, 0, 0)";
     context.fillRect(0, horizon - cssHeight * 0.22, cssWidth, cssHeight * 0.52);
   }
 
@@ -1160,8 +1239,8 @@ export function createExpresswayEngine(
       landmarkSites.some((site) => {
         if (site.kind === "rainbow-bridge") {
           // The Shibaura–Daiba approach is an open-water corridor. Keep the
-          // suspension bridge clear of foreground towers on both banks.
-          return world > site.world - 560 && world < site.world + 840;
+          // suspension bridge and both tapered road runouts clear of towers.
+          return world > site.world - 610 && world < site.world + 1_160;
         }
         if (Math.sign(site.lateral) !== side) return false;
         const [nearClearance, farClearance] =
@@ -2833,52 +2912,30 @@ export function createExpresswayEngine(
     for (const [key, trail] of lightTrailPositions) {
       if (frameNumber - trail.frame > 3) lightTrailPositions.delete(key);
     }
+    while (lightTrailPositions.size > MAX_LIGHT_TRAIL_HISTORY) {
+      const oldestKey = lightTrailPositions.keys().next().value;
+      if (oldestKey === undefined) break;
+      lightTrailPositions.delete(oldestKey);
+    }
   }
 
   function drawHeadlightReflections(): void {
+    if (
+      !leftHeadlightWashCache ||
+      !rightHeadlightWashCache ||
+      !roadSheenCache
+    ) rebuildStaticGradients();
     context.save();
     context.globalCompositeOperation = "screen";
-    const leftWash = context.createRadialGradient(
-      cssWidth * 0.12,
-      cssHeight * 0.82,
-      0,
-      cssWidth * 0.12,
-      cssHeight * 0.82,
-      cssHeight * 0.48,
-    );
-    leftWash.addColorStop(0, "rgba(128, 201, 230, 0.2)");
-    leftWash.addColorStop(0.38, "rgba(88, 151, 181, 0.07)");
-    leftWash.addColorStop(1, "rgba(0, 0, 0, 0)");
-    context.fillStyle = leftWash;
+    context.fillStyle = leftHeadlightWashCache ?? "rgba(0, 0, 0, 0)";
     context.fillRect(0, horizon, cssWidth, cssHeight - horizon);
 
-    const rightWash = context.createRadialGradient(
-      cssWidth * 0.88,
-      cssHeight * 0.86,
-      0,
-      cssWidth * 0.88,
-      cssHeight * 0.86,
-      cssHeight * 0.45,
-    );
-    rightWash.addColorStop(0, "rgba(103, 172, 203, 0.12)");
-    rightWash.addColorStop(1, "rgba(0, 0, 0, 0)");
-    context.fillStyle = rightWash;
+    context.fillStyle = rightHeadlightWashCache ?? "rgba(0, 0, 0, 0)";
     context.fillRect(0, horizon, cssWidth, cssHeight - horizon);
 
     // A radial pool has no hard x-boundaries, avoiding the vertical seams that
     // the previous cropped sheen rectangle exposed at the bottom of the frame.
-    const roadSheen = context.createRadialGradient(
-      cssWidth * 0.5,
-      cssHeight * 1.04,
-      cssHeight * 0.04,
-      cssWidth * 0.5,
-      cssHeight * 1.04,
-      Math.max(cssWidth, cssHeight) * 0.7,
-    );
-    roadSheen.addColorStop(0, "rgba(139, 194, 211, 0.092)");
-    roadSheen.addColorStop(0.46, "rgba(87, 138, 158, 0.032)");
-    roadSheen.addColorStop(1, "rgba(0, 0, 0, 0)");
-    context.fillStyle = roadSheen;
+    context.fillStyle = roadSheenCache ?? "rgba(0, 0, 0, 0)";
     context.fillRect(0, horizon, cssWidth, cssHeight - horizon);
     context.restore();
   }
@@ -2918,30 +2975,11 @@ export function createExpresswayEngine(
   }
 
   function drawAtmosphereAndGrain(): void {
-    const distanceFog = context.createLinearGradient(
-      0,
-      horizon - cssHeight * 0.09,
-      0,
-      horizon + cssHeight * 0.21,
-    );
-    distanceFog.addColorStop(0, "rgba(18, 29, 35, 0)");
-    distanceFog.addColorStop(0.48, "rgba(23, 36, 42, 0.105)");
-    distanceFog.addColorStop(1, "rgba(15, 22, 27, 0)");
-    context.fillStyle = distanceFog;
+    if (!distanceFogCache || !vignetteCache) rebuildStaticGradients();
+    context.fillStyle = distanceFogCache ?? "rgba(0, 0, 0, 0)";
     context.fillRect(0, horizon - cssHeight * 0.1, cssWidth, cssHeight * 0.34);
 
-    const vignette = context.createRadialGradient(
-      cssWidth * 0.5,
-      cssHeight * 0.5,
-      Math.min(cssWidth, cssHeight) * 0.22,
-      cssWidth * 0.5,
-      cssHeight * 0.49,
-      Math.max(cssWidth, cssHeight) * 0.72,
-    );
-    vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
-    vignette.addColorStop(0.66, "rgba(0, 0, 0, 0.08)");
-    vignette.addColorStop(1, "rgba(0, 0, 0, 0.58)");
-    context.fillStyle = vignette;
+    context.fillStyle = vignetteCache ?? "rgba(0, 0, 0, 0)";
     context.fillRect(0, 0, cssWidth, cssHeight);
 
     if (frameNumber % (quality === "MOBILE" ? 12 : 7) === 0) {
@@ -3218,6 +3256,23 @@ export function createExpresswayEngine(
       }, 90);
       audioRig = null;
     }
+    roadPoints.length = 0;
+    sceneObjects.length = 0;
+    cityLayerItems.length = 0;
+    depthSceneItems.length = 0;
+    vehicles.length = 0;
+    lightTrailPositions.clear();
+    noisePattern = null;
+    noiseImageData = null;
+    skyGradientCache = null;
+    horizonHazeCache = null;
+    leftHeadlightWashCache = null;
+    rightHeadlightWashCache = null;
+    roadSheenCache = null;
+    distanceFogCache = null;
+    vignetteCache = null;
+    resizeDrawingLayer(glowLayer, 1, 1);
+    resizeDrawingLayer(noiseLayer, 1, 1);
   }
 
   window.addEventListener("resize", resize, { passive: true });
