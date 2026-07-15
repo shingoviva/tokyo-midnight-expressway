@@ -17,6 +17,9 @@ export const OVERTAKE_LANE_OFFSET_METERS = 1.72;
 const PASSING_MANEUVER_TRIGGER_METERS = 92;
 const PASSING_LANE_REAR_CLEARANCE_METERS = 18;
 const PASSING_LANE_FORWARD_CLEARANCE_METERS = 48;
+const ROAD_OBSTACLE_TRIGGER_METERS = 145;
+const AVOIDANCE_LANE_REAR_CLEARANCE_METERS = 24;
+const AVOIDANCE_LANE_FORWARD_CLEARANCE_METERS = 58;
 
 const LONGITUDINAL_CLEARANCE_METERS: Readonly<
   Record<OvertakeTrafficKind, number>
@@ -76,15 +79,17 @@ export function safeOvertakeTargetAgainstVehicle(
   );
 }
 
-function overlapsLaneCorridor(
+function overlapsVehicleCorridor(
   laneLateral: number,
+  movingKind: OvertakeTrafficKind,
   vehicleLateral: number,
   vehicleKind: OvertakeTrafficKind,
+  paddingMeters: number,
 ): boolean {
-  const taxiHalfWidth = VEHICLE_WIDTH_METERS.sedan * 0.5;
+  const movingHalfWidth = VEHICLE_WIDTH_METERS[movingKind] * 0.5;
   const vehicleHalfWidth = VEHICLE_WIDTH_METERS[vehicleKind] * 0.5;
   return Math.abs(vehicleLateral - laneLateral) <
-    taxiHalfWidth + vehicleHalfWidth + 0.3;
+    movingHalfWidth + vehicleHalfWidth + paddingMeters;
 }
 
 /**
@@ -102,10 +107,12 @@ export function selectPassingLane(
     return (
       forwardGap > 0 &&
       forwardGap <= PASSING_MANEUVER_TRIGGER_METERS &&
-      overlapsLaneCorridor(
+      overlapsVehicleCorridor(
         currentLaneLateral,
+        "sedan",
         vehicle.lateral,
         vehicle.kind,
+        0.3,
       )
     );
   });
@@ -117,10 +124,12 @@ export function selectPassingLane(
       : OVERTAKE_LANE_OFFSET_METERS;
   const passingLaneBlocked = traffic.some((vehicle) => {
     if (
-      !overlapsLaneCorridor(
+      !overlapsVehicleCorridor(
         passingLaneLateral,
+        "sedan",
         vehicle.lateral,
         vehicle.kind,
+        0.3,
       )
     ) {
       return false;
@@ -133,6 +142,54 @@ export function selectPassingLane(
   });
 
   return passingLaneBlocked ? currentLaneLateral : passingLaneLateral;
+}
+
+export function roadObstacleRequiresAvoidance(
+  vehicleZ: number,
+  vehicleLateral: number,
+  vehicleKind: OvertakeTrafficKind,
+  obstacleZ: number,
+  obstacleLateral: number,
+  obstacleKind: OvertakeTrafficKind,
+): boolean {
+  const forwardGap = obstacleZ - vehicleZ;
+  return (
+    forwardGap > 0 &&
+    forwardGap <= ROAD_OBSTACLE_TRIGGER_METERS &&
+    overlapsVehicleCorridor(
+      vehicleLateral,
+      vehicleKind,
+      obstacleLateral,
+      obstacleKind,
+      0.42,
+    )
+  );
+}
+
+export function avoidanceLaneBlockedByVehicle(
+  vehicleZ: number,
+  targetLaneLateral: number,
+  vehicleKind: OvertakeTrafficKind,
+  otherZ: number,
+  otherLateral: number,
+  otherKind: OvertakeTrafficKind,
+): boolean {
+  if (
+    !overlapsVehicleCorridor(
+      targetLaneLateral,
+      vehicleKind,
+      otherLateral,
+      otherKind,
+      0.34,
+    )
+  ) {
+    return false;
+  }
+  const relativeZ = otherZ - vehicleZ;
+  return (
+    relativeZ >= -AVOIDANCE_LANE_REAR_CLEARANCE_METERS &&
+    relativeZ <= AVOIDANCE_LANE_FORWARD_CLEARANCE_METERS
+  );
 }
 
 export function smoothPassingLateral(

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   advanceOvertakePosition,
+  avoidanceLaneBlockedByVehicle,
+  roadObstacleRequiresAvoidance,
   safeOvertakeTargetZ,
   selectPassingLane,
   smoothPassingLateral,
@@ -56,6 +58,70 @@ test("passing lane movement has eased endpoints", () => {
   assert.equal(smoothPassingLateral(1.72, -1.72, 0), 1.72);
   assert.equal(smoothPassingLateral(1.72, -1.72, 1), -1.72);
   assert.equal(smoothPassingLateral(1.72, -1.72, 0.5), 0);
+});
+
+test("a moving vehicle identifies a stopped truck in its lane early", () => {
+  assert.equal(
+    roadObstacleRequiresAvoidance(
+      120,
+      1.72,
+      "sedan",
+      238,
+      1.72,
+      "truck",
+    ),
+    true,
+  );
+  assert.equal(
+    roadObstacleRequiresAvoidance(
+      120,
+      -1.72,
+      "sedan",
+      238,
+      1.72,
+      "truck",
+    ),
+    false,
+  );
+});
+
+test("a stopped object behind the moving vehicle does not trigger avoidance", () => {
+  assert.equal(
+    roadObstacleRequiresAvoidance(
+      238,
+      1.72,
+      "minivan",
+      120,
+      1.72,
+      "truck",
+    ),
+    false,
+  );
+});
+
+test("avoidance waits while another vehicle occupies the destination lane", () => {
+  assert.equal(
+    avoidanceLaneBlockedByVehicle(
+      120,
+      -1.72,
+      "sedan",
+      150,
+      -1.72,
+      "minivan",
+    ),
+    true,
+  );
+  assert.equal(
+    avoidanceLaneBlockedByVehicle(
+      120,
+      -1.72,
+      "sedan",
+      150,
+      1.72,
+      "minivan",
+    ),
+    false,
+  );
 });
 
 test("the taxi enters and releases from traffic limits without position jumps", () => {

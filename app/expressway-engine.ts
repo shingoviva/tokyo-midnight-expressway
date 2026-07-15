@@ -12,7 +12,9 @@ import {
 } from "./roadside-layout";
 import {
   advanceOvertakePosition,
+  avoidanceLaneBlockedByVehicle,
   OVERTAKE_LANE_OFFSET_METERS,
+  roadObstacleRequiresAvoidance,
   safeOvertakeTargetAgainstVehicle,
   selectPassingLane,
   smoothPassingLateral,
@@ -88,6 +90,10 @@ type TrafficVehicle = {
   laneChangeTo?: -1 | 1;
   laneChangeStartZ?: number;
   laneChangeEndZ?: number;
+  avoidanceFromLateral?: number;
+  avoidanceToLateral?: number;
+  avoidanceProgress?: number;
+  avoidanceDuration?: number;
 };
 
 type SceneObject =
@@ -2097,6 +2103,56 @@ export function createExpresswayEngine(
     context.stroke();
   }
 
+  type ScriptedRoadObstaclePose = Readonly<{
+    z: number;
+    lateral: number;
+    kind: VehicleKind;
+    role: "merging-truck" | "maintenance";
+    shade: number;
+    signalSide?: -1 | 1;
+  }>;
+
+  function scriptedRoadObstaclePose(
+    event: NonNullable<DriveDirectorState["event"]>,
+  ): ScriptedRoadObstaclePose | null {
+    const { progressMeters: progress, durationMeters: duration } = event;
+    const { side, variant } = event;
+    if (event.kind === "taxi-overtake") return null;
+    if (event.kind === "truck-merge") {
+      return {
+        z: lerp(
+          FAR_DISTANCE - 35,
+          0.05,
+          smoothstep(0, duration, progress),
+        ),
+        lateral: lerp(
+          side * OVERTAKE_LANE_OFFSET_METERS,
+          -side * OVERTAKE_LANE_OFFSET_METERS,
+          smoothstep(
+            duration * [0.36, 0.48, 0.58][variant],
+            duration * [0.62, 0.76, 0.86][variant],
+            progress,
+          ),
+        ),
+        kind: "truck",
+        role: "merging-truck",
+        shade: 0.58,
+        signalSide: -side,
+      };
+    }
+    return {
+      z: lerp(
+        FAR_DISTANCE - 55,
+        0.05,
+        smoothstep(0, duration, progress),
+      ),
+      lateral: side * [2.08, 2.28, 2.42][variant],
+      kind: variant === 2 ? "truck" : "minivan",
+      role: "maintenance",
+      shade: 0.94,
+    };
+  }
+
   function collectDirectorEventObject(): void {
     const event = directorState.event;
     if (!event) {
@@ -2202,38 +2258,16 @@ export function createExpresswayEngine(
         taxiDeltaSeconds,
       );
       z = taxiVisualZ;
-    } else if (event.kind === "truck-merge") {
-      taxiEncounterActive = false;
-      z = lerp(
-        FAR_DISTANCE - 35,
-        0.05,
-        smoothstep(0, duration, progress),
-      );
-      lanePosition = lerp(
-        side * 1.72,
-        -side * 1.72,
-        smoothstep(
-          duration * [0.36, 0.48, 0.58][variant],
-          duration * [0.62, 0.76, 0.86][variant],
-          progress,
-        ),
-      );
-      eventVehicle.kind = "truck";
-      eventVehicle.role = "merging-truck";
-      eventVehicle.shade = 0.58;
-      eventVehicle.signalSide = -side;
     } else {
       taxiEncounterActive = false;
-      z = lerp(
-        FAR_DISTANCE - 55,
-        0.05,
-        smoothstep(0, duration, progress),
-      );
-      const shoulderOffset = [2.08, 2.28, 2.42][variant];
-      lanePosition = side * shoulderOffset;
-      eventVehicle.kind = "minivan";
-      eventVehicle.role = "maintenance";
-      eventVehicle.shade = 0.94;
+      const obstacle = scriptedRoadObstaclePose(event);
+      if (!obstacle) return;
+      z = obstacle.z;
+      lanePosition = obstacle.lateral;
+      eventVehicle.kind = obstacle.kind;
+      eventVehicle.role = obstacle.role;
+      eventVehicle.shade = obstacle.shade;
+      eventVehicle.signalSide = obstacle.signalSide;
     }
 
     lanePosition = safeVehicleLanePosition(eventVehicle, lanePosition);
@@ -2970,10 +3004,22 @@ export function createExpresswayEngine(
       );
     }
 
-    const tailY = vehicle.kind === "truck" ? bottom - height * 0.13 : bottom - height * 0.22;
-    const tailOffset = width * 0.34;
-    const tailWidth = clamp(width * 0.12, 1, 15);
-    const tailHeight = clamp(height * 0.075, 1, 8);
+    const tailY = vehicle.kind === "truck"
+      ? bottom - height * 0.13
+      : bottom - height * 0.23;
+    const tailOffset = width * (vehicle.kind === "truck" ? 0.34 : 0.32);
+    // Keep the lamps proportional to the body in the near field. The previous
+    // low pixel caps made them appear to shrink as the camera overtook a car.
+    const tailWidth = clamp(
+      width * (vehicle.kind === "truck" ? 0.14 : 0.165),
+      1,
+      32,
+    );
+    const tailHeight = clamp(
+      height * (vehicle.kind === "truck" ? 0.085 : 0.11),
+      1,
+      18,
+    );
     for (const side of [-1, 1]) {
       const tailX = base.x + side * tailOffset;
       context.fillStyle = "#f13b2f";
@@ -2987,7 +3033,6 @@ export function createExpresswayEngine(
     }
 
     if (
-      (vehicle.role === "merging-truck" || vehicle.role === "taxi") &&
       vehicle.signalSide !== undefined &&
       positiveModulo(elapsedTime, 0.82) < 0.46
     ) {
@@ -3514,11 +3559,21 @@ export function createExpresswayEngine(
     vehicle.shade = seeded(seed, 389);
     vehicle.role = "ambient";
     vehicle.signalSide = undefined;
+    vehicle.avoidanceFromLateral = undefined;
+    vehicle.avoidanceToLateral = undefined;
+    vehicle.avoidanceProgress = undefined;
+    vehicle.avoidanceDuration = undefined;
     scheduleAmbientManeuver(vehicle, seed);
   }
 
   function updateVehicles(deltaSeconds: number): void {
     const paceFactor = 0.7 + speedKmh / 165;
+    const obstacle = directorState.event
+      ? scriptedRoadObstaclePose(directorState.event)
+      : null;
+    const obstacleLateral = obstacle
+      ? safeVehicleLanePosition(obstacle, obstacle.lateral)
+      : 0;
     for (const vehicle of vehicles) {
       vehicle.z -= vehicle.closingSpeed * paceFactor * deltaSeconds;
       if (
@@ -3548,6 +3603,91 @@ export function createExpresswayEngine(
           vehicle.laneChangeTo = undefined;
           vehicle.laneChangeStartZ = undefined;
           vehicle.laneChangeEndZ = undefined;
+        }
+      }
+
+      if (
+        vehicle.avoidanceFromLateral !== undefined &&
+        vehicle.avoidanceToLateral !== undefined &&
+        vehicle.avoidanceProgress !== undefined &&
+        vehicle.avoidanceDuration !== undefined
+      ) {
+        vehicle.avoidanceProgress = clamp(
+          vehicle.avoidanceProgress +
+            deltaSeconds / Math.max(0.001, vehicle.avoidanceDuration),
+          0,
+          1,
+        );
+        vehicle.lanePosition = smoothPassingLateral(
+          vehicle.avoidanceFromLateral,
+          vehicle.avoidanceToLateral,
+          vehicle.avoidanceProgress,
+        );
+        vehicle.signalSide = vehicle.avoidanceToLateral >= 0 ? 1 : -1;
+        if (vehicle.avoidanceProgress >= 1) {
+          vehicle.lane = vehicle.avoidanceToLateral >= 0 ? 1 : -1;
+          vehicle.lanePosition = undefined;
+          vehicle.signalSide = undefined;
+          vehicle.avoidanceFromLateral = undefined;
+          vehicle.avoidanceToLateral = undefined;
+          vehicle.avoidanceProgress = undefined;
+          vehicle.avoidanceDuration = undefined;
+        }
+      } else if (obstacle) {
+        const currentLateral = safeVehicleLanePosition(
+          vehicle,
+          vehicle.lanePosition ??
+            vehicle.lane * OVERTAKE_LANE_OFFSET_METERS,
+        );
+        if (
+          roadObstacleRequiresAvoidance(
+            vehicle.z,
+            currentLateral,
+            vehicle.kind,
+            obstacle.z,
+            obstacleLateral,
+            obstacle.kind,
+          )
+        ) {
+          const targetLateral =
+            obstacleLateral >= 0
+              ? -OVERTAKE_LANE_OFFSET_METERS
+              : OVERTAKE_LANE_OFFSET_METERS;
+          let targetLaneBlocked = false;
+          for (const other of vehicles) {
+            if (other === vehicle) continue;
+            const otherLateral = safeVehicleLanePosition(
+              other,
+              other.lanePosition ??
+                other.lane * OVERTAKE_LANE_OFFSET_METERS,
+            );
+            if (
+              avoidanceLaneBlockedByVehicle(
+                vehicle.z,
+                targetLateral,
+                vehicle.kind,
+                other.z,
+                otherLateral,
+                other.kind,
+              )
+            ) {
+              targetLaneBlocked = true;
+              break;
+            }
+          }
+          if (!targetLaneBlocked) {
+            const avoidanceDuration =
+              2.35 + seeded(vehicle.id + vehicle.generation * 29, 431) * 0.5;
+            vehicle.avoidanceFromLateral = currentLateral;
+            vehicle.avoidanceToLateral = targetLateral;
+            vehicle.avoidanceProgress = 0;
+            vehicle.avoidanceDuration = avoidanceDuration;
+            vehicle.signalSide = targetLateral >= 0 ? 1 : -1;
+            vehicle.laneChangeFrom = undefined;
+            vehicle.laneChangeTo = undefined;
+            vehicle.laneChangeStartZ = undefined;
+            vehicle.laneChangeEndZ = undefined;
+          }
         }
       }
       if (vehicle.z < -16) recycleVehicle(vehicle);
@@ -3696,6 +3836,7 @@ export function createExpresswayEngine(
     const travelledMeters = (speedKmh / 3.6) * deltaSeconds;
     totalDistanceMeters += travelledMeters;
     journeyDistanceMeters += travelledMeters;
+    directorState = sampleDriveDirector(journeyDistanceMeters, sessionSeed);
     updateVehicles(deltaSeconds);
     updateAudio(timestamp);
     renderFrame();
