@@ -3,6 +3,10 @@ import {
   type ProceduralSignSprite,
 } from "./procedural-assets";
 import {
+  sampleDriveDirector,
+  type DriveDirectorState,
+} from "./drive-director";
+import {
   collectProceduralLandmarks,
   collectProceduralLandmarkSites,
   drawProceduralLandmark,
@@ -56,6 +60,7 @@ type ProjectedPoint = {
 };
 
 type VehicleKind = "sedan" | "minivan" | "truck";
+type VehicleRole = "ambient" | "taxi" | "merging-truck" | "maintenance";
 
 type TrafficVehicle = {
   id: number;
@@ -65,6 +70,9 @@ type TrafficVehicle = {
   kind: VehicleKind;
   shade: number;
   generation: number;
+  role: VehicleRole;
+  lanePosition?: number;
+  signalSide?: -1 | 1;
 };
 
 type SceneObject =
@@ -410,6 +418,7 @@ export function createExpresswayEngine(
   let audioRig: AudioRig | null = null;
   let audioUpdateTime = 0;
   let resizeObserver: ResizeObserver | null = null;
+  let directorState: DriveDirectorState = sampleDriveDirector(0, sessionSeed);
 
   function signGlowColor(family: string, alpha = 0.12): string {
     if (family.startsWith("led")) return `rgba(255, 121, 31, ${alpha * 1.45})`;
@@ -457,19 +466,35 @@ export function createExpresswayEngine(
   >();
 
   const initialVehicleCount = 20;
+  const initialVehicleSpacing = lerp(82, 52, directorState.intensity);
   for (let index = 0; index < initialVehicleCount; index += 1) {
     const vehicleSeed = index + sessionSeed;
     const kindRoll = seeded(vehicleSeed, 91);
     vehicles.push({
       id: index,
-      z: 42 + index * 52 + seeded(vehicleSeed, 17) * 34,
+      z: 46 + index * initialVehicleSpacing + seeded(vehicleSeed, 17) * 38,
       lane: seeded(vehicleSeed, 41) > 0.5 ? 1 : -1,
       closingSpeed: 0.55 + seeded(vehicleSeed, 29) * 1.65,
       kind: kindRoll > 0.84 ? "truck" : kindRoll > 0.6 ? "minivan" : "sedan",
       shade: seeded(vehicleSeed, 53),
       generation: 0,
+      role: "ambient",
     });
   }
+
+  // Reused for every scripted encounter. The director mutates this single
+  // instance instead of allocating event traffic on every animation frame.
+  const eventVehicle: TrafficVehicle = {
+    id: 100_000,
+    z: FAR_DISTANCE,
+    lane: 1,
+    closingSpeed: 0,
+    kind: "sedan",
+    shade: 0.1,
+    generation: 0,
+    role: "taxi",
+    lanePosition: 1.72,
+  };
 
   function transformGroundPattern(
     pattern: CanvasPattern,
@@ -1066,7 +1091,9 @@ export function createExpresswayEngine(
       const columnStep = Math.max(1, Math.ceil(realColumns / maximumColumns));
       const windowWidth = clamp(base.scale * 2.05, 0.65, width * 0.18);
       const windowHeight = clamp(base.scale * 1.08, 0.55, 4.2);
-      const windowVisibility = farFade(z, 1420, 2140);
+      const windowVisibility =
+        farFade(z, 1420, 2140) *
+        lerp(0.56, 1.08, directorState.intensity);
       context.globalAlpha = atmosphericAlpha * windowVisibility;
 
       const facadeDetailVisibility =
@@ -1153,7 +1180,8 @@ export function createExpresswayEngine(
       const advertisingVisibility =
         smoothstep(2, 14, boardWidth) *
         smoothstep(1.5, 11, boardHeight) *
-        farFade(z, 1750, 2550);
+        farFade(z, 1750, 2550) *
+        lerp(0.48, 1.16, directorState.intensity);
       if (advertisingVisibility > 0.002) {
         context.save();
         context.globalAlpha = atmosphericAlpha * advertisingVisibility;
@@ -1922,6 +1950,60 @@ export function createExpresswayEngine(
     context.stroke();
   }
 
+  function collectDirectorEventObject(): void {
+    const event = directorState.event;
+    if (!event) return;
+    const progress = event.progressMeters;
+    const duration = event.durationMeters;
+    const side = event.side;
+    let z = FAR_DISTANCE;
+    let lanePosition = side * 1.72;
+
+    eventVehicle.signalSide = undefined;
+    if (event.kind === "taxi-overtake") {
+      const turnDistance = 430;
+      z = progress < turnDistance
+        ? lerp(3.2, 165, smoothstep(0, turnDistance, progress))
+        : lerp(165, 0.05, smoothstep(turnDistance, duration, progress));
+      lanePosition = side * lerp(4.9, 1.72, smoothstep(0, 125, progress));
+      eventVehicle.kind = "sedan";
+      eventVehicle.role = "taxi";
+      eventVehicle.shade = 0.08;
+    } else if (event.kind === "truck-merge") {
+      z = lerp(
+        FAR_DISTANCE - 35,
+        0.05,
+        smoothstep(0, duration, progress),
+      );
+      lanePosition = lerp(
+        side * 1.72,
+        -side * 1.72,
+        smoothstep(duration * 0.48, duration * 0.76, progress),
+      );
+      eventVehicle.kind = "truck";
+      eventVehicle.role = "merging-truck";
+      eventVehicle.shade = 0.58;
+      eventVehicle.signalSide = -side;
+    } else {
+      z = lerp(
+        FAR_DISTANCE - 55,
+        0.05,
+        smoothstep(0, duration, progress),
+      );
+      lanePosition = side * 2.52;
+      eventVehicle.kind = "minivan";
+      eventVehicle.role = "maintenance";
+      eventVehicle.shade = 0.94;
+    }
+
+    eventVehicle.z = z;
+    eventVehicle.lane = lanePosition >= 0 ? 1 : -1;
+    eventVehicle.lanePosition = lanePosition;
+    if (z >= NEAR_DISTANCE && z < FAR_DISTANCE) {
+      sceneObjects.push({ kind: "vehicle", z, vehicle: eventVehicle });
+    }
+  }
+
   function collectSceneObjects(): void {
     sceneObjects.length = 0;
 
@@ -1995,6 +2077,7 @@ export function createExpresswayEngine(
         sceneObjects.push({ kind: "vehicle", z: vehicle.z, vehicle });
       }
     }
+    collectDirectorEventObject();
 
     const bollardSpacing = 9.4;
     const bollardFirst = Math.floor((totalDistanceMeters - bollardSpacing) / bollardSpacing);
@@ -2041,6 +2124,7 @@ export function createExpresswayEngine(
     ) return;
     const visibility = farFade(object.z, FAR_DISTANCE * 0.7, FAR_DISTANCE);
     if (visibility <= 0.002) return;
+    const lampEnergy = lerp(0.62, 1.12, directorState.intensity);
     context.save();
     context.globalAlpha = visibility;
     context.strokeStyle = cool
@@ -2069,7 +2153,7 @@ export function createExpresswayEngine(
         const ratio = trailLength / distance;
         const glowContext = glowLayer.context;
         glowContext.save();
-        glowContext.globalAlpha = 0.14 * visibility;
+        glowContext.globalAlpha = 0.14 * visibility * lampEnergy;
         glowContext.strokeStyle = cool ? "rgba(155, 224, 250, 0.72)" : "rgba(255, 156, 78, 0.7)";
         glowContext.lineWidth = Math.max(0.9, lampRadius * 1.16);
         glowContext.lineCap = "round";
@@ -2086,8 +2170,8 @@ export function createExpresswayEngine(
       top.y,
       clamp(6 + base.scale * 2.7, 7, 58),
       cool
-        ? `rgba(141, 215, 247, ${0.48 * visibility})`
-        : `rgba(255, 143, 65, ${0.5 * visibility})`,
+        ? `rgba(141, 215, 247, ${0.48 * visibility * lampEnergy})`
+        : `rgba(255, 143, 65, ${0.5 * visibility * lampEnergy})`,
     );
     context.restore();
   }
@@ -2455,17 +2539,23 @@ export function createExpresswayEngine(
     context.restore();
   }
 
-  function vehiclePaint(shade: number): { body: string; highlight: string } {
-    if (shade < 0.22) return { body: "#181b1e", highlight: "#3a4044" };
-    if (shade < 0.46) return { body: "#747a7d", highlight: "#aab0b1" };
-    if (shade < 0.72) return { body: "#d0d1cc", highlight: "#f0eee7" };
-    if (shade < 0.88) return { body: "#2b3440", highlight: "#596677" };
+  function vehiclePaint(vehicle: TrafficVehicle): { body: string; highlight: string } {
+    if (vehicle.role === "taxi") {
+      return { body: "#11191a", highlight: "#426564" };
+    }
+    if (vehicle.role === "maintenance") {
+      return { body: "#b66a1d", highlight: "#f2b24f" };
+    }
+    if (vehicle.shade < 0.22) return { body: "#181b1e", highlight: "#3a4044" };
+    if (vehicle.shade < 0.46) return { body: "#747a7d", highlight: "#aab0b1" };
+    if (vehicle.shade < 0.72) return { body: "#d0d1cc", highlight: "#f0eee7" };
+    if (vehicle.shade < 0.88) return { body: "#2b3440", highlight: "#596677" };
     return { body: "#6b2220", highlight: "#9a4a43" };
   }
 
   function drawVehicle(object: Extract<SceneObject, { kind: "vehicle" }>): void {
     const vehicle = object.vehicle;
-    const laneCenter = vehicle.lane * 1.72;
+    const laneCenter = vehicle.lanePosition ?? vehicle.lane * 1.72;
     const base = projectedAt(object.z, laneCenter);
     const dimensions = vehicle.kind === "truck"
       ? { width: 2.42, height: 3.45 }
@@ -2516,7 +2606,7 @@ export function createExpresswayEngine(
     const bottom = base.groundY - base.scale * 0.05;
     const left = base.x - width * 0.5;
     const top = bottom - height;
-    const paint = vehiclePaint(vehicle.shade);
+    const paint = vehiclePaint(vehicle);
     const vehicleSilhouette: ReadonlyArray<readonly [number, number]> =
       vehicle.kind === "truck"
         ? [
@@ -2584,6 +2674,45 @@ export function createExpresswayEngine(
       context.fillRect(left + width * 0.04, bottom - height * 0.18, width * 0.92, height * 0.13);
     }
 
+    if (vehicle.role === "taxi") {
+      const roofLampWidth = clamp(width * 0.24, 2, 18);
+      const roofLampHeight = clamp(height * 0.075, 1, 6);
+      const roofLampY = top - roofLampHeight * 0.08;
+      context.fillStyle = "rgba(174, 236, 216, 0.96)";
+      context.fillRect(
+        base.x - roofLampWidth * 0.5,
+        roofLampY,
+        roofLampWidth,
+        roofLampHeight,
+      );
+      drawGlowDot(
+        base.x,
+        roofLampY + roofLampHeight * 0.5,
+        clamp(base.scale * 0.72, 2, 15),
+        "rgba(112, 228, 196, 0.18)",
+      );
+    } else if (
+      vehicle.role === "maintenance" &&
+      positiveModulo(elapsedTime, 0.74) < 0.43
+    ) {
+      const beaconWidth = clamp(width * 0.2, 2, 15);
+      const beaconHeight = clamp(height * 0.09, 1, 7);
+      const beaconY = top - beaconHeight * 0.12;
+      context.fillStyle = "rgba(255, 171, 38, 0.98)";
+      context.fillRect(
+        base.x - beaconWidth * 0.5,
+        beaconY,
+        beaconWidth,
+        beaconHeight,
+      );
+      drawGlowDot(
+        base.x,
+        beaconY + beaconHeight * 0.5,
+        clamp(base.scale * 2.1, 4, 34),
+        "rgba(255, 130, 20, 0.42)",
+      );
+    }
+
     const tailY = vehicle.kind === "truck" ? bottom - height * 0.13 : bottom - height * 0.22;
     const tailOffset = width * 0.34;
     const tailWidth = clamp(width * 0.12, 1, 15);
@@ -2597,6 +2726,27 @@ export function createExpresswayEngine(
         tailY + tailHeight * 0.5,
         clamp(base.scale * 1.25, 3, 26),
         `rgba(255, 34, 22, ${0.5 * visibility})`,
+      );
+    }
+
+    if (
+      vehicle.role === "merging-truck" &&
+      positiveModulo(elapsedTime, 0.82) < 0.46
+    ) {
+      const signalX =
+        base.x + (vehicle.signalSide ?? 1) * tailOffset;
+      context.fillStyle = "rgba(255, 166, 38, 0.98)";
+      context.fillRect(
+        signalX - tailWidth * 0.42,
+        tailY - tailHeight * 0.08,
+        tailWidth * 0.84,
+        tailHeight * 1.16,
+      );
+      drawGlowDot(
+        signalX,
+        tailY + tailHeight * 0.5,
+        clamp(base.scale * 0.9, 3, 20),
+        "rgba(255, 140, 28, 0.34)",
       );
     }
 
@@ -3077,6 +3227,7 @@ export function createExpresswayEngine(
 
   function renderFrame(): void {
     if (destroyed || cssWidth <= 0 || cssHeight <= 0) return;
+    directorState = sampleDriveDirector(journeyDistanceMeters, sessionSeed);
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     clearGlow();
     drawSky();
@@ -3093,12 +3244,17 @@ export function createExpresswayEngine(
     vehicle.generation += 1;
     const seed = vehicle.id * 131 + vehicle.generation * 19;
     const farthestVehicle = Math.max(360, ...vehicles.map((item) => item.z));
-    vehicle.z = farthestVehicle + 58 + seeded(seed, 367) * 170;
+    const minimumGap = lerp(112, 52, directorState.intensity);
+    const gapVariation = lerp(205, 118, directorState.intensity);
+    vehicle.z = farthestVehicle + minimumGap + seeded(seed, 367) * gapVariation;
     vehicle.lane = seeded(seed, 373) > 0.5 ? 1 : -1;
+    vehicle.lanePosition = undefined;
     vehicle.closingSpeed = 0.5 + seeded(seed, 379) * 2.2;
     const kindRoll = seeded(seed, 383);
     vehicle.kind = kindRoll > 0.87 ? "truck" : kindRoll > 0.62 ? "minivan" : "sedan";
     vehicle.shade = seeded(seed, 389);
+    vehicle.role = "ambient";
+    vehicle.signalSide = undefined;
   }
 
   function updateVehicles(deltaSeconds: number): void {
@@ -3133,7 +3289,7 @@ export function createExpresswayEngine(
 
   function audioTargetGain(): number {
     if (!soundEnabled || paused || hidden) return 0.0001;
-    return 0.046;
+    return lerp(0.036, 0.052, directorState.intensity);
   }
 
   function applyAudioGain(): void {
@@ -3219,7 +3375,11 @@ export function createExpresswayEngine(
     audioRig.subOscillator.frequency.setTargetAtTime(engineFrequency * 0.5, now, 0.1);
     audioRig.engineFilter.frequency.setTargetAtTime(190 + normalizedSpeed * 170, now, 0.12);
     audioRig.roadFilter.frequency.setTargetAtTime(520 + normalizedSpeed * 720, now, 0.14);
-    audioRig.roadGain.gain.setTargetAtTime(0.23 + normalizedSpeed * 0.31, now, 0.15);
+    audioRig.roadGain.gain.setTargetAtTime(
+      (0.2 + normalizedSpeed * 0.3) * lerp(0.82, 1.12, directorState.intensity),
+      now,
+      0.15,
+    );
   }
 
   function scheduleFrame(): void {
