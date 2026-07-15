@@ -130,6 +130,10 @@ const CAMERA_HEIGHT = 1.34;
 // Two 3.25 m lanes plus compact urban-expressway shoulders.
 const ROAD_HALF_WIDTH = 3.7;
 const FAR_DISTANCE = 1800;
+// Transverse overpasses are introduced before the road mesh reaches its far
+// plane. They can therefore become fully opaque behind the skyline before any
+// support is large enough to read as a distinct object.
+const OVERPASS_FAR_DISTANCE = FAR_DISTANCE + 560;
 const CITY_FAR_DISTANCE = 2800;
 const NEAR_DISTANCE = 0.12;
 const LOCATION_LENGTH = 700;
@@ -1973,7 +1977,7 @@ export function createExpresswayEngine(
       for (let level = 0; level < OVERPASS_ANCHORS.length; level += 1) {
         const world = block * SCENE_LENGTH + OVERPASS_ANCHORS[level];
         const z = world - totalDistanceMeters;
-        if (z >= NEAR_DISTANCE && z < FAR_DISTANCE) {
+        if (z >= NEAR_DISTANCE && z < OVERPASS_FAR_DISTANCE) {
           sceneObjects.push({
             kind: "overpass",
             z,
@@ -2094,10 +2098,15 @@ export function createExpresswayEngine(
     const location = locationIndex(world);
     const local = locationLocal(world);
     const detailVisibility = farFade(object.z, FAR_DISTANCE * 0.72, FAR_DISTANCE);
-    // Structural mass stays opaque at distance; haze is carried by colour and
-    // detail loss. Alpha fading made the deck look as if it passed through the
-    // buildings behind it.
-    const visibility = 1;
+    // Begin the complete structure beyond the road mesh's far plane. It is
+    // already opaque by the time it joins the normal depth scene, avoiding the
+    // one-frame creation of minimum-width columns at 1,800 m.
+    const visibility = farFade(
+      object.z,
+      FAR_DISTANCE + 100,
+      OVERPASS_FAR_DISTANCE,
+    );
+    if (visibility <= 0.001) return;
 
     if (location === 12 && local > 375) {
       const portalHeight = 6.8 * base.scale;
@@ -2160,6 +2169,25 @@ export function createExpresswayEngine(
     const pierWidth = clamp(base.scale * 2.7, 2, cssWidth * 0.2);
     const overpassGroundY =
       base.groundY + (8.4 + object.level * 0.72) * base.scale;
+    const pierTopY = deckY + thickness * 0.68;
+    const pierBottomY = overpassGroundY;
+    const pierHeight = Math.max(0, pierBottomY - pierTopY);
+    const pierVisibility = (pierX: number): number => {
+      const horizontalOverlap = Math.min(
+        pierX + pierWidth * 0.5 + 24,
+        cssWidth + 24 - (pierX - pierWidth * 0.5),
+      );
+      const verticalOverlap = Math.min(
+        pierBottomY + 24,
+        cssHeight + 24 - pierTopY,
+      );
+      return (
+        visibility *
+        smoothstep(0, clamp(cssWidth * 0.065, 30, 82), horizontalOverlap) *
+        smoothstep(0, clamp(cssHeight * 0.08, 28, 72), verticalOverlap) *
+        smoothstep(0.32, 1.15, base.scale * 2.7)
+      );
+    };
     const deckVisible = deckY + thickness > -24 && deckY < cssHeight + 24;
     const pierVisible = [-13, 13].some((lateral) => {
       const pierX = base.x + lateral * base.scale;
@@ -2178,14 +2206,18 @@ export function createExpresswayEngine(
       deckY,
       deckHalfWidth * 2,
       thickness,
+      visibility,
     );
     for (const lateral of [-13, 13]) {
       const pierX = base.x + lateral * base.scale;
+      const supportVisibility = pierVisibility(pierX);
+      if (supportVisibility <= 0.001) continue;
       occludeGlowRect(
         pierX - pierWidth * 0.5,
-        deckY + thickness * 0.68,
+        pierTopY,
         pierWidth,
-        Math.max(0, overpassGroundY - deckY - thickness * 0.68),
+        pierHeight,
+        supportVisibility,
       );
     }
     context.save();
@@ -2217,12 +2249,17 @@ export function createExpresswayEngine(
     context.fillStyle = "rgba(86, 99, 105, 0.86)";
     for (const lateral of [-13, 13]) {
       const pierX = base.x + lateral * base.scale;
+      const supportVisibility = pierVisibility(pierX);
+      if (supportVisibility <= 0.001) continue;
+      context.save();
+      context.globalAlpha = supportVisibility;
       context.fillRect(
         pierX - pierWidth * 0.5,
-        deckY + thickness * 0.68,
+        pierTopY,
         pierWidth,
-        Math.max(0, overpassGroundY - deckY - thickness * 0.68),
+        pierHeight,
       );
+      context.restore();
     }
 
     context.strokeStyle = "rgba(121, 137, 144, 0.42)";
