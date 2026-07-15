@@ -12,7 +12,10 @@ import {
 } from "./roadside-layout";
 import {
   advanceOvertakePosition,
+  OVERTAKE_LANE_OFFSET_METERS,
   safeOvertakeTargetAgainstVehicle,
+  selectPassingLane,
+  smoothPassingLateral,
 } from "./traffic-encounters";
 import {
   collectProceduralLandmarks,
@@ -588,6 +591,19 @@ export function createExpresswayEngine(
   let taxiEncounterActive = false;
   let taxiVisualZ = 0.05;
   let taxiLastUpdateTime = 0;
+  let taxiLanePosition = OVERTAKE_LANE_OFFSET_METERS;
+  let taxiTargetLanePosition = OVERTAKE_LANE_OFFSET_METERS;
+  let taxiLaneChangeFrom = OVERTAKE_LANE_OFFSET_METERS;
+  let taxiLaneChangeStartProgress = 0;
+  const taxiTrafficSamples: Array<{
+    z: number;
+    lateral: number;
+    kind: VehicleKind;
+  }> = vehicles.map((vehicle) => ({
+    z: vehicle.z,
+    lateral: vehicle.lane * OVERTAKE_LANE_OFFSET_METERS,
+    kind: vehicle.kind,
+  }));
 
   function transformGroundPattern(
     pattern: CanvasPattern,
@@ -2096,37 +2112,83 @@ export function createExpresswayEngine(
 
     eventVehicle.signalSide = undefined;
     if (event.kind === "taxi-overtake") {
-      const turnDistance = [390, 470, 540][variant];
-      const peakDistance = [145, 178, 205][variant];
-      const desiredZ = progress < turnDistance
-        ? lerp(0.08, peakDistance, smoothstep(0, turnDistance, progress))
-        : lerp(peakDistance, 0.05, smoothstep(turnDistance, duration, progress));
-      const laneInset = [1.72, 1.58, 1.44][variant];
-      lanePosition = side * lerp(
-        1.72,
-        laneInset,
-        smoothstep(duration * 0.31, duration * 0.64, progress),
+      // The taxi now keeps moving away after it passes rather than returning
+      // toward the camera in the second half of the encounter.
+      const desiredZ = lerp(
+        0.08,
+        [560, 620, 680][variant],
+        clamp(progress / duration, 0, 1),
       );
       eventVehicle.kind = "sedan";
       eventVehicle.role = "taxi";
       eventVehicle.shade = 0.08;
-      let safeTargetZ = desiredZ;
-      for (const vehicle of vehicles) {
-        safeTargetZ = safeOvertakeTargetAgainstVehicle(
-          safeTargetZ,
-          lanePosition,
-          vehicle.z,
-          safeVehicleLanePosition(
-            vehicle,
-            vehicle.lanePosition ?? vehicle.lane * 1.72,
-          ),
-          vehicle.kind,
-        );
-      }
       if (!taxiEncounterActive) {
         taxiEncounterActive = true;
         taxiVisualZ = 0.05;
         taxiLastUpdateTime = elapsedTime;
+        taxiLanePosition = side * OVERTAKE_LANE_OFFSET_METERS;
+        taxiTargetLanePosition = taxiLanePosition;
+        taxiLaneChangeFrom = taxiLanePosition;
+        // Mark the taxi as settled in its initial lane so the first passing
+        // decision can happen while it is still emerging from behind camera.
+        taxiLaneChangeStartProgress = progress - [72, 80, 88][variant];
+      }
+
+      for (let index = 0; index < vehicles.length; index += 1) {
+        const vehicle = vehicles[index];
+        const sample = taxiTrafficSamples[index];
+        sample.z = vehicle.z;
+        sample.lateral = safeVehicleLanePosition(
+          vehicle,
+          vehicle.lanePosition ??
+            vehicle.lane * OVERTAKE_LANE_OFFSET_METERS,
+        );
+        sample.kind = vehicle.kind;
+      }
+
+      const laneChangeDistance = [72, 80, 88][variant];
+      let laneChangeProgress = clamp(
+        (progress - taxiLaneChangeStartProgress) / laneChangeDistance,
+        0,
+        1,
+      );
+      taxiLanePosition = smoothPassingLateral(
+        taxiLaneChangeFrom,
+        taxiTargetLanePosition,
+        laneChangeProgress,
+      );
+      if (laneChangeProgress >= 1) {
+        const selectedLane = selectPassingLane(
+          taxiVisualZ,
+          taxiTargetLanePosition,
+          taxiTrafficSamples,
+        );
+        if (selectedLane !== taxiTargetLanePosition) {
+          taxiLaneChangeFrom = taxiLanePosition;
+          taxiTargetLanePosition = selectedLane;
+          taxiLaneChangeStartProgress = progress;
+          laneChangeProgress = 0;
+        }
+      }
+      lanePosition = taxiLanePosition;
+      if (laneChangeProgress < 1) {
+        eventVehicle.signalSide = taxiTargetLanePosition >= 0 ? 1 : -1;
+      }
+
+      // This remains as a last-resort guard for a temporarily boxed-in taxi.
+      // The early lane selection above normally clears the vehicle before this
+      // longitudinal limit can become visible.
+      let safeTargetZ = desiredZ;
+      for (let index = 0; index < taxiTrafficSamples.length; index += 1) {
+        const sample = taxiTrafficSamples[index];
+        safeTargetZ = safeOvertakeTargetAgainstVehicle(
+          safeTargetZ,
+          taxiVisualZ,
+          lanePosition,
+          sample.z,
+          sample.lateral,
+          sample.kind,
+        );
       }
       const taxiDeltaSeconds = clamp(
         elapsedTime - taxiLastUpdateTime,
@@ -2232,11 +2294,13 @@ export function createExpresswayEngine(
       const world = index * emergencySpacing + 95;
       const z = world - totalDistanceMeters;
       if (z < NEAR_DISTANCE || z >= FAR_DISTANCE) continue;
+      const side: -1 | 1 = index % 2 === 0 ? -1 : 1;
+      if (roadsideSignBlockedByTallWall(world, side)) continue;
       sceneObjects.push({
         kind: "emergency-unit",
         z,
         index,
-        side: index % 2 === 0 ? -1 : 1,
+        side,
       });
     }
 
@@ -2655,6 +2719,8 @@ export function createExpresswayEngine(
   function drawEmergencyUnit(
     object: Extract<SceneObject, { kind: "emergency-unit" }>,
   ): void {
+    const world = totalDistanceMeters + object.z;
+    if (roadsideSignBlockedByTallWall(world, object.side)) return;
     const lateral = object.side * (ROAD_HALF_WIDTH + 0.82);
     const base = projectedAt(object.z, lateral);
     const visibility = farFade(object.z, 980, 1_480);
@@ -2921,7 +2987,8 @@ export function createExpresswayEngine(
     }
 
     if (
-      vehicle.role === "merging-truck" &&
+      (vehicle.role === "merging-truck" || vehicle.role === "taxi") &&
+      vehicle.signalSide !== undefined &&
       positiveModulo(elapsedTime, 0.82) < 0.46
     ) {
       const signalX =

@@ -44,3 +44,11 @@ test("the same wall clearance repeats with the procedural scene cycle", () => {
   assert.equal(roadsideSignBlockedByTallWall(8_500, 1), true);
   assert.equal(roadsideSignBlockedByTallWall(9_040, 1), false);
 });
+
+test("emergency telephone positions use the same sound-wall exclusion", () => {
+  // Emergency units repeat every 500 m with a 95 m offset. The 1,595 m unit
+  // falls inside the double-sided sound-wall location and must be suppressed.
+  assert.equal(roadsideSignBlockedByTallWall(1_595, -1), true);
+  assert.equal(roadsideSignBlockedByTallWall(1_595, 1), true);
+  assert.equal(roadsideSignBlockedByTallWall(2_095, 1), false);
+});
