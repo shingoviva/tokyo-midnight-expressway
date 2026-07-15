@@ -71,6 +71,7 @@ type SceneObject =
   | { kind: "light"; z: number; index: number; side: -1 | 1 }
   | { kind: "sign"; z: number; index: number }
   | { kind: "overpass"; z: number; index: number; level: number }
+  | { kind: "emergency-unit"; z: number; index: number; side: -1 | 1 }
   | { kind: "bollard"; z: number; index: number; side: -1 | 1 }
   | { kind: "vehicle"; z: number; vehicle: TrafficVehicle };
 
@@ -101,6 +102,15 @@ type ElevatedSpanSpec = {
   heightMeters: number;
   halfWidthMeters: number;
   curvePhase: number;
+};
+
+type BuildingFootprint = {
+  location: number;
+  occupancy: number;
+  openWaterfront: boolean;
+  closeCanyon: boolean;
+  widthMeters: number;
+  lateral: number;
 };
 
 type AudioRig = {
@@ -153,6 +163,7 @@ const ELEVATED_SPAN_SPECS: readonly ElevatedSpanSpec[] = [
   { level: 0, drawStart: 8230, coreStart: 8405, coreEnd: 9095, drawEnd: 9275, coreOffset: 24, terminalSide: 1, heightMeters: 8.8, halfWidthMeters: 4.45, curvePhase: 0.82 },
   { level: 1, drawStart: 8395, coreStart: 8565, coreEnd: 8945, drawEnd: 9115, coreOffset: -31, terminalSide: -1, heightMeters: 14.4, halfWidthMeters: 4.25, curvePhase: 0.47 },
 ];
+const OVERPASS_ANCHORS = [865, 1120, 2485, 4580, 5180, 8565, 8840] as const;
 
 const ROUTE_NAMES = [
   "C1 都心環状線",
@@ -187,6 +198,47 @@ function hashInteger(value: number): number {
 
 function seeded(index: number, salt = 0): number {
   return hashInteger(Math.imul(index, 0x1f123bb5) + salt) / 4294967295;
+}
+
+let retainedSessionSeed: number | null = null;
+let retainedStartLocation: number | null = null;
+
+function createSessionSeed(): number {
+  if (retainedSessionSeed !== null) return retainedSessionSeed;
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const entropy = new Uint32Array(1);
+    crypto.getRandomValues(entropy);
+    retainedSessionSeed = entropy[0] & 0x7fffffff;
+    return retainedSessionSeed;
+  }
+  retainedSessionSeed = hashInteger(
+    Date.now() ^ Math.floor(performance.now() * 1000),
+  );
+  return retainedSessionSeed;
+}
+
+function createSessionStartLocation(sessionSeed: number): number {
+  if (retainedStartLocation !== null) return retainedStartLocation;
+  let location = Math.floor(seeded(sessionSeed, 8_401) * LOCATION_NAMES.length);
+  try {
+    const previous = Number.parseInt(
+      sessionStorage.getItem("after-midnight:last-start-location") ?? "-1",
+      10,
+    );
+    if (location === previous) {
+      const offset =
+        1 + Math.floor(seeded(sessionSeed, 8_409) * (LOCATION_NAMES.length - 1));
+      location = positiveModulo(location + offset, LOCATION_NAMES.length);
+    }
+    sessionStorage.setItem(
+      "after-midnight:last-start-location",
+      String(location),
+    );
+  } catch {
+    // Storage can be unavailable in private browsing; entropy still varies.
+  }
+  retainedStartLocation = location;
+  return location;
 }
 
 function periodicPhase(distance: number, period: number, offset = 0): number {
@@ -291,6 +343,12 @@ export function createExpresswayEngine(
   }
 
   const context = mainContext;
+  const sessionSeed = createSessionSeed();
+  const sessionStartLocation = createSessionStartLocation(sessionSeed);
+  const sessionStartProgress =
+    72 + seeded(sessionSeed, 8_417) * (LOCATION_LENGTH - 164);
+  const sessionStartMeters =
+    sessionStartLocation * LOCATION_LENGTH + sessionStartProgress;
   const glowLayer = createDrawingLayer();
   const noiseLayer = createDrawingLayer(128, 128);
   const proceduralAssets = createProceduralAssets();
@@ -330,7 +388,8 @@ export function createExpresswayEngine(
   let lastFrameTime = 0;
   let lastTelemetryTime = -Infinity;
   let elapsedTime = 0;
-  let totalDistanceMeters = 0;
+  let totalDistanceMeters = sessionStartMeters;
+  let journeyDistanceMeters = 0;
   let speedKmh = 82;
   let smoothedFps = 60;
   let frameNumber = 0;
@@ -386,14 +445,15 @@ export function createExpresswayEngine(
 
   const initialVehicleCount = 20;
   for (let index = 0; index < initialVehicleCount; index += 1) {
-    const kindRoll = seeded(index, 91);
+    const vehicleSeed = index + sessionSeed;
+    const kindRoll = seeded(vehicleSeed, 91);
     vehicles.push({
       id: index,
-      z: 42 + index * 52 + seeded(index, 17) * 34,
-      lane: seeded(index, 41) > 0.5 ? 1 : -1,
-      closingSpeed: 0.55 + seeded(index, 29) * 1.65,
+      z: 42 + index * 52 + seeded(vehicleSeed, 17) * 34,
+      lane: seeded(vehicleSeed, 41) > 0.5 ? 1 : -1,
+      closingSpeed: 0.55 + seeded(vehicleSeed, 29) * 1.65,
       kind: kindRoll > 0.84 ? "truck" : kindRoll > 0.6 ? "minivan" : "sedan",
-      shade: seeded(index, 53),
+      shade: seeded(vehicleSeed, 53),
       generation: 0,
     });
   }
@@ -729,14 +789,13 @@ export function createExpresswayEngine(
     context.fillRect(0, horizon - cssHeight * 0.22, cssWidth, cssHeight * 0.52);
   }
 
-  function drawBuilding(index: number, side: -1 | 1, z: number): void {
-    if (z < NEAR_DISTANCE || z > CITY_FAR_DISTANCE) return;
-    const location = locationIndex(totalDistanceMeters + z);
+  function buildingFootprint(
+    index: number,
+    side: -1 | 1,
+    world: number,
+  ): BuildingFootprint {
+    const location = locationIndex(world);
     const occupancy = seeded(index * 2 + (side > 0 ? 1 : 0), 101);
-    const locationDensity = [0.02, 0.08, 0.16, 0.19, 0.13, 0.02, 0.01, 0.04, 0.2, 0.24, 0.31, 0.12, 0.17, 0.06][location];
-    const densityRelief = quality === "MOBILE" ? 0.08 : quality === "BALANCED" ? 0.045 : 0.025;
-    if (occupancy < locationDensity + densityRelief) return;
-
     const openWaterfront = location === 8 || location === 9 || location === 10;
     const closeCanyon = location === 0 || location === 5 || location === 6 || location === 7;
     const widthMeters =
@@ -747,13 +806,72 @@ export function createExpresswayEngine(
       (closeCanyon ? 16 : openWaterfront ? 30 : 18) +
       seeded(index, side > 0 ? 113 : 127) *
         (closeCanyon ? 58 : openWaterfront ? 96 : 72);
-    // Reserve a real urban right-of-way outside the shoulder and barrier.
-    // The previous facade edge could sit at road-deck level and looked as if
-    // the tower footprint occupied the expressway on tighter curves.
     const facadeClearance = closeCanyon ? 13 : openWaterfront ? 20 : 15;
     const minimumCenterDistance =
       ROAD_HALF_WIDTH + facadeClearance + widthMeters * 0.5;
-    const lateral = side * Math.max(nominalCenterDistance, minimumCenterDistance);
+    return {
+      location,
+      occupancy,
+      openWaterfront,
+      closeCanyon,
+      widthMeters,
+      lateral: side * Math.max(nominalCenterDistance, minimumCenterDistance),
+    };
+  }
+
+  function clearsElevatedCorridor(
+    world: number,
+    footprint: BuildingFootprint,
+  ): boolean {
+    const firstBlock = Math.floor(world / SCENE_LENGTH) - 1;
+    for (let block = firstBlock; block <= firstBlock + 2; block += 1) {
+      const localWorld = world - block * SCENE_LENGTH;
+      const transverseClearance = Math.max(20, footprint.widthMeters * 0.32);
+      if (
+        OVERPASS_ANCHORS.some(
+          (anchor) => Math.abs(localWorld - anchor) < transverseClearance,
+        )
+      ) {
+        return false;
+      }
+      for (const spec of ELEVATED_SPAN_SPECS) {
+        // Include the full facade width and a maintenance/inspection margin.
+        // This makes the secondary highway and the city share one physical
+        // right-of-way instead of being two independent overlapping layers.
+        const longitudinalMargin = Math.max(18, footprint.widthMeters * 0.28);
+        if (
+          localWorld < spec.drawStart - longitudinalMargin ||
+          localWorld > spec.drawEnd + longitudinalMargin
+        ) continue;
+        const state = elevatedState(
+          spec,
+          clamp(localWorld, spec.drawStart, spec.drawEnd),
+        );
+        if (state.approach < 0.055) continue;
+        const clearHalfWidth =
+          spec.halfWidthMeters + footprint.widthMeters * 0.5 + 8.5;
+        if (Math.abs(footprint.lateral - state.offset) < clearHalfWidth) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  function drawBuilding(index: number, side: -1 | 1, z: number): void {
+    if (z < NEAR_DISTANCE || z > CITY_FAR_DISTANCE) return;
+    const footprint = buildingFootprint(index, side, totalDistanceMeters + z);
+    const {
+      location,
+      occupancy,
+      openWaterfront,
+      closeCanyon,
+      widthMeters,
+      lateral,
+    } = footprint;
+    const locationDensity = [0.02, 0.08, 0.16, 0.19, 0.13, 0.02, 0.01, 0.04, 0.2, 0.24, 0.31, 0.12, 0.17, 0.06][location];
+    const densityRelief = quality === "MOBILE" ? 0.08 : quality === "BALANCED" ? 0.045 : 0.025;
+    if (occupancy < locationDensity + densityRelief) return;
     const base = projectedAt(z, lateral);
     const deckAboveTerrain =
       (openWaterfront ? 7.2 : closeCanyon ? 8.8 : 7.8) +
@@ -1065,11 +1183,20 @@ export function createExpresswayEngine(
     for (let index = last; index >= first; index -= 1) {
       const world = index * spacing + (seeded(index, 307) - 0.5) * spacing * 0.58;
       const z = world - totalDistanceMeters;
-      if (!reservesLandmarkSite(world, -1)) {
+      const leftFootprint = buildingFootprint(index, -1, world);
+      if (
+        !reservesLandmarkSite(world, -1) &&
+        clearsElevatedCorridor(world, leftFootprint)
+      ) {
         cityLayerItems.push({ kind: "building", z, index, side: -1 });
       }
       const rightZ = z + (seeded(index, 311) - 0.5) * 14;
-      if (!reservesLandmarkSite(totalDistanceMeters + rightZ, 1)) {
+      const rightWorld = totalDistanceMeters + rightZ;
+      const rightFootprint = buildingFootprint(index, 1, rightWorld);
+      if (
+        !reservesLandmarkSite(rightWorld, 1) &&
+        clearsElevatedCorridor(rightWorld, rightFootprint)
+      ) {
         cityLayerItems.push({ kind: "building", z: rightZ, index, side: 1 });
       }
     }
@@ -1193,6 +1320,32 @@ export function createExpresswayEngine(
         [near.center + nearRoad, near.y + 0.8],
         [near.center - nearRoad, near.y + 0.8],
       ]);
+      context.restore();
+    }
+
+    // Subtle bridge-deck expansion joints add the repeating structural scale
+    // visible on long elevated sections without turning into a moving texture.
+    const expansionSpacing = 96;
+    const expansionWorld = Math.floor(far.world / expansionSpacing) * expansionSpacing;
+    const expansionVisibility = farFade(far.z, 620, 1_020);
+    if (
+      expansionWorld > near.world &&
+      expansionWorld <= far.world &&
+      expansionVisibility > 0.002
+    ) {
+      const joint = roadPointAt(expansionWorld - totalDistanceMeters);
+      const jointHalf = ROAD_HALF_WIDTH * joint.scale;
+      const jointGap = clamp(joint.scale * 0.055, 0.5, 2.4);
+      context.save();
+      context.globalAlpha = 0.52 * expansionVisibility;
+      context.strokeStyle = "rgba(2, 5, 7, 0.94)";
+      context.lineWidth = clamp(joint.scale * 0.07, 0.55, 2.8);
+      for (const offset of [-jointGap, jointGap]) {
+        context.beginPath();
+        context.moveTo(joint.center - jointHalf * 0.98, joint.y + offset);
+        context.lineTo(joint.center + jointHalf * 0.98, joint.y + offset);
+        context.stroke();
+      }
       context.restore();
     }
 
@@ -1426,15 +1579,20 @@ export function createExpresswayEngine(
     const top = projectedAt(z, state.offset, Math.max(0.6, state.height - capHeight));
     const columnWidth = (terminal ? 3.8 : 2.15) * base.scale;
     const capWidth = (spec.halfWidthMeters * 2 + (terminal ? 5.4 : 2.4)) * base.scale;
+    const terrainDropMeters =
+      (terminal ? 10.8 : 8.2) + seeded(Math.round(world / 6), 1_763) * 2.6;
+    const pierGroundY = base.groundY + terrainDropMeters * base.scale;
+    const footingHeight = (terminal ? 0.72 : 0.48) * base.scale;
+    const footingWidth = columnWidth * (terminal ? 1.72 : 1.58);
     if (
-      base.x + Math.max(columnWidth, capWidth) < -30 ||
-      base.x - Math.max(columnWidth, capWidth) > cssWidth + 30
+      base.x + Math.max(columnWidth, capWidth, footingWidth) < -30 ||
+      base.x - Math.max(columnWidth, capWidth, footingWidth) > cssWidth + 30
     ) return;
     occludeGlowRect(
       base.x - columnWidth * 0.5,
       top.y,
       columnWidth,
-      Math.max(0, base.groundY - top.y),
+      Math.max(0, pierGroundY - top.y),
     );
     occludeGlowRect(
       base.x - capWidth * 0.5,
@@ -1442,13 +1600,19 @@ export function createExpresswayEngine(
       capWidth,
       capHeight * base.scale,
     );
+    occludeGlowRect(
+      base.x - footingWidth * 0.5,
+      pierGroundY - footingHeight,
+      footingWidth,
+      footingHeight,
+    );
     context.save();
     context.fillStyle = terminal ? "#4a5559" : "#3d474b";
     context.fillRect(
       base.x - columnWidth * 0.5,
       top.y,
       columnWidth,
-      Math.max(0, base.groundY - top.y),
+      Math.max(0, pierGroundY - top.y),
     );
     context.fillStyle = terminal ? "#59656a" : "#4b575c";
     context.fillRect(
@@ -1457,13 +1621,20 @@ export function createExpresswayEngine(
       capWidth,
       capHeight * base.scale,
     );
+    context.fillStyle = terminal ? "#3a4448" : "#333d41";
+    context.fillRect(
+      base.x - footingWidth * 0.5,
+      pierGroundY - footingHeight,
+      footingWidth,
+      footingHeight,
+    );
     context.strokeStyle = "rgba(142, 157, 161, 0.36)";
     context.lineWidth = clamp(base.scale * 0.06, 0.4, 1.8);
     context.strokeRect(
       base.x - columnWidth * 0.5,
       top.y,
       columnWidth,
-      Math.max(0, base.groundY - top.y),
+      Math.max(0, pierGroundY - top.y),
     );
     context.restore();
   }
@@ -1576,6 +1747,44 @@ export function createExpresswayEngine(
     }
     context.fillStyle = spec.level === 0 ? "#11181c" : "#0d1418";
     fillPolygon(context, deckBody);
+
+    // Wall parapets and longitudinal girder lines make the upper carriageway
+    // read as a supported bridge deck rather than a floating ribbon.
+    const parapetHeightMeters = spec.level === 0 ? 0.82 : 0.72;
+    for (const side of [-1, 1] as const) {
+      const farEdgeX = farCenter + side * farHalf;
+      const nearEdgeX = nearCenter + side * nearHalf;
+      const parapet: ReadonlyArray<readonly [number, number]> = [
+        [farEdgeX, farY],
+        [farEdgeX, farY - parapetHeightMeters * far.scale],
+        [nearEdgeX, nearY - parapetHeightMeters * near.scale],
+        [nearEdgeX, nearY + thicknessNear * 0.12],
+      ];
+      occludeGlowPolygon(parapet);
+      context.fillStyle = side < 0 ? "#465258" : "#39454b";
+      fillPolygon(context, parapet);
+      context.strokeStyle = "rgba(177, 191, 195, 0.42)";
+      context.lineWidth = clamp(near.scale * 0.055, 0.38, 1.7);
+      context.beginPath();
+      context.moveTo(farEdgeX, farY - parapetHeightMeters * far.scale);
+      context.lineTo(nearEdgeX, nearY - parapetHeightMeters * near.scale);
+      context.stroke();
+    }
+
+    context.strokeStyle = "rgba(99, 116, 124, 0.34)";
+    context.lineWidth = clamp(near.scale * 0.075, 0.45, 2.1);
+    for (const girderRatio of [-0.55, 0.55]) {
+      context.beginPath();
+      context.moveTo(
+        farCenter + farHalf * girderRatio,
+        farY + thicknessFar * 0.88,
+      );
+      context.lineTo(
+        nearCenter + nearHalf * girderRatio,
+        nearY + thicknessNear * 0.88,
+      );
+      context.stroke();
+    }
     context.strokeStyle = "rgba(137, 153, 159, 0.45)";
     context.lineWidth = clamp(near.scale * 0.1, 0.45, 2.4);
     context.lineCap = "round";
@@ -1615,18 +1824,39 @@ export function createExpresswayEngine(
       }
     }
 
+    // Open-road emergency telephones are placed at roughly 500 m intervals.
+    // A compact kilometre plate shares the cabinet so it remains readable
+    // without overloading the scene with separate roadside props.
+    const emergencySpacing = 500;
+    const emergencyFirst = Math.floor(
+      (totalDistanceMeters - emergencySpacing - 95) / emergencySpacing,
+    );
+    const emergencyLast = Math.ceil(
+      (totalDistanceMeters + FAR_DISTANCE - 95) / emergencySpacing,
+    );
+    for (let index = emergencyFirst; index <= emergencyLast; index += 1) {
+      const world = index * emergencySpacing + 95;
+      const z = world - totalDistanceMeters;
+      if (z < NEAR_DISTANCE || z >= FAR_DISTANCE) continue;
+      sceneObjects.push({
+        kind: "emergency-unit",
+        z,
+        index,
+        side: index % 2 === 0 ? -1 : 1,
+      });
+    }
+
     const firstBlock = Math.floor((totalDistanceMeters - SCENE_LENGTH) / SCENE_LENGTH);
     for (let block = firstBlock; block <= firstBlock + 2; block += 1) {
       // Keep transverse structures away from the open Rainbow Bridge sightline.
-      const anchors = [865, 1120, 2485, 4580, 5180, 8565, 8840];
-      for (let level = 0; level < anchors.length; level += 1) {
-        const world = block * SCENE_LENGTH + anchors[level];
+      for (let level = 0; level < OVERPASS_ANCHORS.length; level += 1) {
+        const world = block * SCENE_LENGTH + OVERPASS_ANCHORS[level];
         const z = world - totalDistanceMeters;
         if (z >= NEAR_DISTANCE && z < FAR_DISTANCE) {
           sceneObjects.push({
             kind: "overpass",
             z,
-            index: block * anchors.length + level,
+            index: block * OVERPASS_ANCHORS.length + level,
             level: level % 3,
           });
         }
@@ -1807,13 +2037,15 @@ export function createExpresswayEngine(
     );
     const thickness = clamp(1.35 * base.scale, 2, cssHeight * 0.18);
     const pierWidth = clamp(base.scale * 2.7, 2, cssWidth * 0.2);
+    const overpassGroundY =
+      base.groundY + (8.4 + object.level * 0.72) * base.scale;
     const deckVisible = deckY + thickness > -24 && deckY < cssHeight + 24;
     const pierVisible = [-13, 13].some((lateral) => {
       const pierX = base.x + lateral * base.scale;
       return (
         pierX + pierWidth * 0.5 > -24 &&
         pierX - pierWidth * 0.5 < cssWidth + 24 &&
-        base.groundY > -24 &&
+        overpassGroundY > -24 &&
         deckY + thickness * 0.68 < cssHeight + 24
       );
     });
@@ -1832,7 +2064,7 @@ export function createExpresswayEngine(
         pierX - pierWidth * 0.5,
         deckY + thickness * 0.68,
         pierWidth,
-        Math.max(0, base.groundY - deckY - thickness * 0.68),
+        Math.max(0, overpassGroundY - deckY - thickness * 0.68),
       );
     }
     context.save();
@@ -1868,7 +2100,7 @@ export function createExpresswayEngine(
         pierX - pierWidth * 0.5,
         deckY + thickness * 0.68,
         pierWidth,
-        Math.max(0, base.groundY - deckY - thickness * 0.68),
+        Math.max(0, overpassGroundY - deckY - thickness * 0.68),
       );
     }
 
@@ -1982,6 +2214,85 @@ export function createExpresswayEngine(
         signGlowColor(sign.family, 0.11),
       );
       glowLayer.context.restore();
+    }
+    context.restore();
+  }
+
+  function drawEmergencyUnit(
+    object: Extract<SceneObject, { kind: "emergency-unit" }>,
+  ): void {
+    const lateral = object.side * (ROAD_HALF_WIDTH + 0.82);
+    const base = projectedAt(object.z, lateral);
+    const visibility = farFade(object.z, 980, 1_480);
+    const cabinetWidth = 0.72 * base.scale;
+    const cabinetHeight = 1.38 * base.scale;
+    const cabinetBottom = base.groundY - 0.86 * base.scale;
+    const cabinetTop = cabinetBottom - cabinetHeight;
+    if (
+      visibility <= 0.002 ||
+      cabinetWidth < 0.45 ||
+      base.x + cabinetWidth < -24 ||
+      base.x - cabinetWidth > cssWidth + 24
+    ) return;
+
+    const postWidth = clamp(base.scale * 0.12, 0.5, 3.2);
+    occludeGlowRect(
+      base.x - cabinetWidth * 0.58,
+      cabinetTop,
+      cabinetWidth * 1.16,
+      Math.max(cabinetHeight, base.groundY - cabinetTop),
+    );
+    context.save();
+    context.globalAlpha = visibility;
+    context.fillStyle = "#707b80";
+    context.fillRect(
+      base.x - postWidth * 0.5,
+      cabinetBottom,
+      postWidth,
+      Math.max(0, base.groundY - cabinetBottom),
+    );
+    context.fillStyle = "#e6ecea";
+    context.fillRect(
+      base.x - cabinetWidth * 0.5,
+      cabinetTop,
+      cabinetWidth,
+      cabinetHeight,
+    );
+    context.fillStyle = "#1a5e85";
+    context.fillRect(
+      base.x - cabinetWidth * 0.43,
+      cabinetTop + cabinetHeight * 0.08,
+      cabinetWidth * 0.86,
+      cabinetHeight * 0.56,
+    );
+    context.fillStyle = "#d8e5e8";
+    context.fillRect(
+      base.x - cabinetWidth * 0.26,
+      cabinetTop + cabinetHeight * 0.18,
+      cabinetWidth * 0.52,
+      cabinetHeight * 0.18,
+    );
+
+    const textVisibility = smoothstep(7, 17, cabinetWidth * pixelRatio);
+    if (textVisibility > 0.002) {
+      context.globalAlpha = visibility * textVisibility;
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.font = `700 ${clamp(cabinetWidth * 0.23, 6, 18)}px Arial, sans-serif`;
+      context.fillStyle = "#c62925";
+      context.fillText(
+        "SOS",
+        base.x,
+        cabinetTop + cabinetHeight * 0.49,
+      );
+      context.font = `600 ${clamp(cabinetWidth * 0.16, 5, 12)}px Arial, sans-serif`;
+      context.fillStyle = "#26383f";
+      const kilometre = positiveModulo(object.index, 20) * 0.5;
+      context.fillText(
+        `C1 ${kilometre.toFixed(1)}`,
+        base.x,
+        cabinetTop + cabinetHeight * 0.79,
+      );
     }
     context.restore();
   }
@@ -2198,6 +2509,7 @@ export function createExpresswayEngine(
     if (object.kind === "light") drawStreetLight(object);
     else if (object.kind === "sign") drawSign(object);
     else if (object.kind === "overpass") drawOverpass(object);
+    else if (object.kind === "emergency-unit") drawEmergencyUnit(object);
     else if (object.kind === "bollard") drawBollard(object);
     else drawVehicle(object);
   }
@@ -2694,7 +3006,7 @@ export function createExpresswayEngine(
     const route = routeAndScene();
     onTelemetry({
       speedKmh: Math.round(speedKmh),
-      distanceKm: Math.round((totalDistanceMeters / 1000) * 100) / 100,
+      distanceKm: Math.round((journeyDistanceMeters / 1000) * 100) / 100,
       routeName: route.routeName,
       sceneName: route.sceneName,
       fps: Math.round(smoothedFps),
@@ -2815,7 +3127,9 @@ export function createExpresswayEngine(
     const instantaneousFps = 1000 / Math.max(1, elapsedMilliseconds);
     smoothedFps = lerp(smoothedFps, instantaneousFps, 0.075);
     elapsedTime = positiveModulo(elapsedTime + deltaSeconds, 86_400);
-    totalDistanceMeters += (speedKmh / 3.6) * deltaSeconds;
+    const travelledMeters = (speedKmh / 3.6) * deltaSeconds;
+    totalDistanceMeters += travelledMeters;
+    journeyDistanceMeters += travelledMeters;
     updateVehicles(deltaSeconds);
     updateAudio(timestamp);
     renderFrame();
