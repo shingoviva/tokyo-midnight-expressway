@@ -2267,20 +2267,39 @@ export function createExpresswayEngine(
       const deltaY = top.y - previous.y;
       const distance = Math.hypot(deltaX, deltaY);
       if (distance > 0.08) {
-        const trailLength = Math.min(enhancedMotionBlur ? 17 : 7.5, distance);
-        const ratio = trailLength / distance;
-        const glowContext = glowLayer.context;
-        glowContext.save();
-        glowContext.globalAlpha =
-          (enhancedMotionBlur ? 0.24 : 0.14) * visibility * lampEnergy;
-        glowContext.strokeStyle = cool ? "rgba(155, 224, 250, 0.72)" : "rgba(255, 156, 78, 0.7)";
-        glowContext.lineWidth = Math.max(0.9, lampRadius * 1.16);
-        glowContext.lineCap = "round";
-        glowContext.beginPath();
-        glowContext.moveTo(lampX - deltaX * ratio, top.y - deltaY * ratio);
-        glowContext.lineTo(lampX, top.y);
-        glowContext.stroke();
-        glowContext.restore();
+        if (enhancedMotionBlur) {
+          drawAnimeLightStreak({
+            x: lampX,
+            y: top.y,
+            previousX: previous.x,
+            previousY: previous.y,
+            minimumLength: 58,
+            maximumLength: 230,
+            velocityGain: 46,
+            radius: Math.max(1.2, lampRadius),
+            bend: (seeded(object.index, 2_131) - 0.5) * 0.2,
+            haloColor: cool ? "#41cfff" : "#ff6829",
+            bodyColor: cool ? "#83e7ff" : "#ff9d43",
+            coreColor: cool ? "#e8fbff" : "#fff0cf",
+            alpha: visibility * lampEnergy,
+          });
+        } else {
+          const trailLength = Math.min(7.5, distance);
+          const ratio = trailLength / distance;
+          const glowContext = glowLayer.context;
+          glowContext.save();
+          glowContext.globalAlpha = 0.14 * visibility * lampEnergy;
+          glowContext.strokeStyle = cool
+            ? "rgba(155, 224, 250, 0.72)"
+            : "rgba(255, 156, 78, 0.7)";
+          glowContext.lineWidth = Math.max(0.9, lampRadius * 1.16);
+          glowContext.lineCap = "round";
+          glowContext.beginPath();
+          glowContext.moveTo(lampX - deltaX * ratio, top.y - deltaY * ratio);
+          glowContext.lineTo(lampX, top.y);
+          glowContext.stroke();
+          glowContext.restore();
+        }
       }
     }
     lightTrailPositions.set(object.index, { x: lampX, y: top.y, frame: frameNumber });
@@ -2672,6 +2691,79 @@ export function createExpresswayEngine(
     return { body: "#6b2220", highlight: "#9a4a43" };
   }
 
+  function drawAnimeLightStreak({
+    x,
+    y,
+    previousX,
+    previousY,
+    minimumLength,
+    maximumLength,
+    velocityGain,
+    radius,
+    bend,
+    haloColor,
+    bodyColor,
+    coreColor,
+    alpha,
+  }: {
+    x: number;
+    y: number;
+    previousX: number;
+    previousY: number;
+    minimumLength: number;
+    maximumLength: number;
+    velocityGain: number;
+    radius: number;
+    bend: number;
+    haloColor: string;
+    bodyColor: string;
+    coreColor: string;
+    alpha: number;
+  }): void {
+    const deltaX = x - previousX;
+    const deltaY = y - previousY;
+    const speed = Math.hypot(deltaX, deltaY);
+    if (speed <= 0.008) return;
+
+    const directionX = deltaX / speed;
+    const directionY = deltaY / speed;
+    const trailLength = clamp(
+      minimumLength + speed * velocityGain + radius * 3.6,
+      minimumLength,
+      maximumLength,
+    );
+    const endX = x - directionX * trailLength;
+    const endY = y - directionY * trailLength;
+    const bendPixels = bend * trailLength;
+    const controlX =
+      x - directionX * trailLength * 0.48 - directionY * bendPixels;
+    const controlY =
+      y - directionY * trailLength * 0.48 + directionX * bendPixels;
+    const glowContext = glowLayer.context;
+    const stroke = (
+      width: number,
+      color: string,
+      layerAlpha: number,
+    ): void => {
+      glowContext.globalAlpha = clamp(alpha * layerAlpha, 0, 1);
+      glowContext.strokeStyle = color;
+      glowContext.lineWidth = width;
+      glowContext.beginPath();
+      glowContext.moveTo(endX, endY);
+      glowContext.quadraticCurveTo(controlX, controlY, x, y);
+      glowContext.stroke();
+    };
+
+    glowContext.save();
+    glowContext.globalCompositeOperation = "lighter";
+    glowContext.lineCap = "round";
+    glowContext.lineJoin = "round";
+    stroke(Math.max(5, radius * 6.2), haloColor, 0.22);
+    stroke(Math.max(2.4, radius * 2.35), bodyColor, 0.72);
+    stroke(Math.max(0.9, radius * 0.72), coreColor, 1);
+    glowContext.restore();
+  }
+
   function drawTailLightMotionTrail(
     vehicle: TrafficVehicle,
     leftX: number,
@@ -2690,28 +2782,39 @@ export function createExpresswayEngine(
         (previous.leftX + previous.rightX) * 0.5;
       const deltaY = y - previous.y;
       const distance = Math.hypot(deltaX, deltaY);
-      if (distance > 0.08) {
-        const trailLength = Math.min(22, distance);
-        const ratio = trailLength / distance;
-        const glowContext = glowLayer.context;
-        glowContext.save();
-        glowContext.globalAlpha = 0.23 * visibility;
-        glowContext.strokeStyle = "rgba(255, 48, 29, 0.82)";
-        glowContext.lineWidth = Math.max(1, radius * 0.82);
-        glowContext.lineCap = "round";
-        for (const [currentX, previousX] of [
-          [leftX, previous.leftX],
-          [rightX, previous.rightX],
-        ]) {
-          glowContext.beginPath();
-          glowContext.moveTo(
-            currentX - (currentX - previousX) * ratio,
-            y - deltaY * ratio,
-          );
-          glowContext.lineTo(currentX, y);
-          glowContext.stroke();
-        }
-        glowContext.restore();
+      if (distance > 0.012) {
+        const trailRadius = clamp(radius * 0.28, 1.3, 6.5);
+        const bendDirection = (seeded(vehicle.id, 2_177) - 0.5) * 0.24;
+        drawAnimeLightStreak({
+          x: leftX,
+          y,
+          previousX: previous.leftX,
+          previousY: previous.y,
+          minimumLength: 72,
+          maximumLength: 310,
+          velocityGain: 52,
+          radius: trailRadius,
+          bend: bendDirection - 0.025,
+          haloColor: "#ff1028",
+          bodyColor: "#ff2940",
+          coreColor: "#ffd2c5",
+          alpha: visibility,
+        });
+        drawAnimeLightStreak({
+          x: rightX,
+          y,
+          previousX: previous.rightX,
+          previousY: previous.y,
+          minimumLength: 72,
+          maximumLength: 310,
+          velocityGain: 52,
+          radius: trailRadius,
+          bend: bendDirection + 0.025,
+          haloColor: "#ff1028",
+          bodyColor: "#ff2940",
+          coreColor: "#ffd2c5",
+          alpha: visibility,
+        });
       }
     }
     tailLightTrailPositions.set(vehicle.id, {
@@ -3434,6 +3537,7 @@ export function createExpresswayEngine(
   }
 
   function recycleVehicle(vehicle: TrafficVehicle): void {
+    tailLightTrailPositions.delete(vehicle.id);
     vehicle.generation += 1;
     const seed = vehicle.id * 131 + vehicle.generation * 19;
     const farthestVehicle = Math.max(360, ...vehicles.map((item) => item.z));

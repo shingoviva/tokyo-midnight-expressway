@@ -236,6 +236,24 @@ const LANDMARK_METRIC_PROFILES: Readonly<
   },
 };
 
+// Tokyo's expressways frequently run above the surrounding street, canal and
+// waterfront grade. Selected landmarks therefore sit below the camera road
+// surface instead of sharing its projected ground plane.
+const LANDMARK_TERRAIN_DROP_METERS: Readonly<
+  Record<ProceduralLandmarkKind, number>
+> = {
+  "tokyo-tower": 14,
+  skytree: 22,
+  "tokyo-metropolitan-government": 8,
+  "toranomon-hills": 0,
+  "shibuya-scramble-square": 0,
+  "cocoon-tower": 7,
+  "fuji-television": 18,
+  "rainbow-bridge": 0,
+  "big-sight": 12,
+  "harbor-cranes": 25,
+};
+
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
@@ -263,6 +281,15 @@ function seeded(index: number, salt = 0): number {
 
 function positiveModulo(value: number, divisor: number): number {
   return ((value % divisor) + divisor) % divisor;
+}
+
+export function proceduralLandmarkTerrainDropMeters(
+  kind: ProceduralLandmarkKind,
+  block: number,
+): number {
+  const baseDrop = LANDMARK_TERRAIN_DROP_METERS[kind];
+  if (baseDrop <= 0) return 0;
+  return baseDrop * (0.82 + seeded(block, 701 + baseDrop * 113) * 0.36);
 }
 
 function landmarkOccursInBlock(spec: LandmarkSpec, block: number): boolean {
@@ -421,7 +448,8 @@ function projectedPoint(
   const point = options.project(
     instance.z + zOffset * profile.depthScale,
     instance.lateral + lateralOffset * profile.widthScale,
-    metricHeight(instance.kind, height),
+    metricHeight(instance.kind, height) -
+      proceduralLandmarkTerrainDropMeters(instance.kind, instance.block),
   );
   return { x: point.x, y: point.y };
 }

@@ -4,6 +4,7 @@ import {
   DRIVE_DIRECTOR_CYCLE_METERS,
   sampleDriveDirector,
 } from "../app/drive-director.ts";
+import { proceduralLandmarkTerrainDropMeters } from "../app/procedural-landmarks.ts";
 
 test("drive director moves through quiet, rising, peak, and afterglow", () => {
   const quiet = sampleDriveDirector(0, 42);
@@ -45,4 +46,18 @@ test("repeated encounters receive deterministic movement variants", () => {
     variants.add(event.variant);
   }
   assert.ok(variants.size > 1);
+});
+
+test("selected landmarks sit below the expressway ground plane", () => {
+  assert.ok(proceduralLandmarkTerrainDropMeters("tokyo-tower", 4) > 10);
+  assert.ok(proceduralLandmarkTerrainDropMeters("skytree", 4) > 16);
+  assert.ok(proceduralLandmarkTerrainDropMeters("harbor-cranes", 4) > 18);
+  assert.equal(
+    proceduralLandmarkTerrainDropMeters("rainbow-bridge", 4),
+    0,
+  );
+  assert.equal(
+    proceduralLandmarkTerrainDropMeters("shibuya-scramble-square", 4),
+    0,
+  );
 });
