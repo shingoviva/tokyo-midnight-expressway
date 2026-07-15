@@ -86,16 +86,9 @@ type CityLayerItem =
       farWorld: number;
     };
 
-type BuildingGlowMask = {
-  z: number;
-  rect: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  };
-  sideFace: ReadonlyArray<readonly [number, number]>;
-};
+type DepthSceneItem =
+  | { source: "city"; z: number; item: CityLayerItem }
+  | { source: "road"; z: number; object: SceneObject };
 
 type ElevatedSpanSpec = {
   level: 0 | 1;
@@ -299,8 +292,6 @@ export function createExpresswayEngine(
 
   const context = mainContext;
   const glowLayer = createDrawingLayer();
-  const sceneGlowLayer = createDrawingLayer();
-  let activeGlowLayer = glowLayer;
   const noiseLayer = createDrawingLayer(128, 128);
   const proceduralAssets = createProceduralAssets();
   const advertisingSigns = proceduralAssets.signs.filter(
@@ -384,9 +375,9 @@ export function createExpresswayEngine(
   }
 
   const roadPoints: RoadPoint[] = [];
-  const buildingGlowMasks: BuildingGlowMask[] = [];
   const sceneObjects: SceneObject[] = [];
   const cityLayerItems: CityLayerItem[] = [];
+  const depthSceneItems: DepthSceneItem[] = [];
   const vehicles: TrafficVehicle[] = [];
   const lightTrailPositions = new Map<
     number,
@@ -499,18 +490,16 @@ export function createExpresswayEngine(
 
   function configureContextTransforms(): void {
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-    for (const layer of [glowLayer, sceneGlowLayer]) {
-      layer.context.setTransform(
-        pixelRatio * glowRatio,
-        0,
-        0,
-        pixelRatio * glowRatio,
-        0,
-        0,
-      );
-      layer.context.imageSmoothingEnabled = true;
-      layer.context.imageSmoothingQuality = "high";
-    }
+    glowLayer.context.setTransform(
+      pixelRatio * glowRatio,
+      0,
+      0,
+      pixelRatio * glowRatio,
+      0,
+      0,
+    );
+    glowLayer.context.imageSmoothingEnabled = true;
+    glowLayer.context.imageSmoothingQuality = "high";
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
   }
@@ -565,11 +554,6 @@ export function createExpresswayEngine(
 
     resizeDrawingLayer(
       glowLayer,
-      backingWidth * glowRatio,
-      backingHeight * glowRatio,
-    );
-    resizeDrawingLayer(
-      sceneGlowLayer,
       backingWidth * glowRatio,
       backingHeight * glowRatio,
     );
@@ -670,22 +654,17 @@ export function createExpresswayEngine(
     appendPoint(FAR_DISTANCE);
   }
 
-  function clearGlowLayer(layer: DrawingLayer): void {
-    const glowContext = layer.context;
+  function clearGlow(): void {
+    const glowContext = glowLayer.context;
     glowContext.save();
     glowContext.setTransform(1, 0, 0, 1, 0, 0);
-    glowContext.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    glowContext.clearRect(0, 0, glowLayer.canvas.width, glowLayer.canvas.height);
     glowContext.restore();
-  }
-
-  function clearGlow(): void {
-    clearGlowLayer(glowLayer);
-    clearGlowLayer(sceneGlowLayer);
   }
 
   function occludeGlowPolygon(points: ReadonlyArray<readonly [number, number]>): void {
     if (points.length < 3) return;
-    const glowContext = activeGlowLayer.context;
+    const glowContext = glowLayer.context;
     glowContext.save();
     glowContext.globalCompositeOperation = "destination-out";
     glowContext.globalAlpha = 1;
@@ -696,7 +675,7 @@ export function createExpresswayEngine(
 
   function occludeGlowRect(x: number, y: number, width: number, height: number): void {
     if (width <= 0 || height <= 0) return;
-    const glowContext = activeGlowLayer.context;
+    const glowContext = glowLayer.context;
     glowContext.save();
     glowContext.globalCompositeOperation = "destination-out";
     glowContext.globalAlpha = 1;
@@ -715,7 +694,7 @@ export function createExpresswayEngine(
     if (x < -radius || x > cssWidth + radius || y < -radius || y > cssHeight + radius) {
       return;
     }
-    const glowContext = activeGlowLayer.context;
+    const glowContext = glowLayer.context;
     const gradient = glowContext.createRadialGradient(x, y, 0, x, y, radius);
     gradient.addColorStop(0, innerColor);
     gradient.addColorStop(0.24, innerColor);
@@ -750,12 +729,7 @@ export function createExpresswayEngine(
     context.fillRect(0, horizon - cssHeight * 0.22, cssWidth, cssHeight * 0.52);
   }
 
-  function drawBuilding(
-    index: number,
-    side: -1 | 1,
-    z: number,
-    collectGlowMask = false,
-  ): void {
+  function drawBuilding(index: number, side: -1 | 1, z: number): void {
     if (z < NEAR_DISTANCE || z > CITY_FAR_DISTANCE) return;
     const location = locationIndex(totalDistanceMeters + z);
     const occupancy = seeded(index * 2 + (side > 0 ? 1 : 0), 101);
@@ -773,11 +747,18 @@ export function createExpresswayEngine(
       (closeCanyon ? 16 : openWaterfront ? 30 : 18) +
       seeded(index, side > 0 ? 113 : 127) *
         (closeCanyon ? 58 : openWaterfront ? 96 : 72);
-    const facadeClearance = closeCanyon ? 8 : openWaterfront ? 15 : 11;
+    // Reserve a real urban right-of-way outside the shoulder and barrier.
+    // The previous facade edge could sit at road-deck level and looked as if
+    // the tower footprint occupied the expressway on tighter curves.
+    const facadeClearance = closeCanyon ? 13 : openWaterfront ? 20 : 15;
     const minimumCenterDistance =
       ROAD_HALF_WIDTH + facadeClearance + widthMeters * 0.5;
     const lateral = side * Math.max(nominalCenterDistance, minimumCenterDistance);
     const base = projectedAt(z, lateral);
+    const deckAboveTerrain =
+      (openWaterfront ? 7.2 : closeCanyon ? 8.8 : 7.8) +
+      seeded(index, 147 + side) * 3.4;
+    base.groundY += deckAboveTerrain * base.scale;
     let heightMeters =
       (openWaterfront ? 14 : closeCanyon ? 42 : 28) +
       seeded(index, 151 - side) * (closeCanyon ? 138 : openWaterfront ? 52 : 104);
@@ -809,14 +790,6 @@ export function createExpresswayEngine(
       [side > 0 ? left + width + depth : left - depth, base.groundY],
       [side > 0 ? left + width : left, base.groundY],
     ];
-
-    if (collectGlowMask) {
-      buildingGlowMasks.push({
-        z,
-        rect: { x: left, y: top, width, height: height + 2 },
-        sideFace,
-      });
-    }
 
     // The glow buffer is composited after the entire scene. Punch the complete
     // opaque building silhouette out of it before adding this building's own
@@ -1034,9 +1007,8 @@ export function createExpresswayEngine(
     context.globalAlpha = 1;
   }
 
-  function drawCity(): void {
-    buildingGlowMasks.length = 0;
-    const landmarkOptions: ProceduralLandmarkOptions = {
+  function createLandmarkOptions(): ProceduralLandmarkOptions {
+    return {
       totalDistanceMeters,
       sceneLength: SCENE_LENGTH,
       cssWidth,
@@ -1046,6 +1018,10 @@ export function createExpresswayEngine(
         projectedAt(z, lateral, objectHeight),
       glowDot: drawGlowDot,
     };
+  }
+
+  function collectCityLayerItems(): void {
+    const landmarkOptions = createLandmarkOptions();
     const landmarks = collectProceduralLandmarks(landmarkOptions);
     cityLayerItems.length = 0;
     for (const landmark of landmarks) {
@@ -1100,32 +1076,20 @@ export function createExpresswayEngine(
 
     collectElevatedLayerItems(cityLayerItems);
     cityLayerItems.sort((firstItem, secondItem) => secondItem.z - firstItem.z);
-    for (const item of cityLayerItems) {
-      if (item.kind === "building") {
-        drawBuilding(item.index, item.side, item.z, true);
-      } else if (item.kind === "landmark") {
-        drawProceduralLandmark(
-          context,
-          glowLayer.context,
-          landmarkOptions,
-          item.landmark,
-        );
-      } else {
-        drawElevatedDeckSlice(item);
-      }
-    }
-    buildingGlowMasks.sort((first, second) => second.z - first.z);
   }
 
-  function redrawForegroundBuildingOccluders(z: number): void {
-    for (const item of cityLayerItems) {
-      if (
-        item.kind === "building" &&
-        item.z < z - 0.001 &&
-        item.z >= NEAR_DISTANCE
-      ) {
-        drawBuilding(item.index, item.side, item.z);
-      }
+  function drawCityLayerItem(item: CityLayerItem): void {
+    if (item.kind === "building") {
+      drawBuilding(item.index, item.side, item.z);
+    } else if (item.kind === "landmark") {
+      drawProceduralLandmark(
+        context,
+        glowLayer.context,
+        createLandmarkOptions(),
+        item.landmark,
+      );
+    } else {
+      drawElevatedDeckSlice(item);
     }
   }
 
@@ -1185,13 +1149,15 @@ export function createExpresswayEngine(
   ): void {
     const farOuter = (ROAD_HALF_WIDTH + 1.18) * far.scale;
     const nearOuter = (ROAD_HALF_WIDTH + 1.18) * near.scale;
-    context.fillStyle = "#202629";
-    fillPolygon(context, [
+    const outerRoadPolygon: ReadonlyArray<readonly [number, number]> = [
       [far.center - farOuter, far.y],
       [far.center + farOuter, far.y],
       [near.center + nearOuter, near.y + 0.78],
       [near.center - nearOuter, near.y + 0.78],
-    ]);
+    ];
+    occludeGlowPolygon(outerRoadPolygon);
+    context.fillStyle = "#202629";
+    fillPolygon(context, outerRoadPolygon);
 
     const farRoad = ROAD_HALF_WIDTH * far.scale;
     const nearRoad = ROAD_HALF_WIDTH * near.scale;
@@ -1746,7 +1712,7 @@ export function createExpresswayEngine(
       if (distance > 0.08) {
         const trailLength = Math.min(7.5, distance);
         const ratio = trailLength / distance;
-        const glowContext = activeGlowLayer.context;
+        const glowContext = glowLayer.context;
         glowContext.save();
         glowContext.globalAlpha = 0.14 * visibility;
         glowContext.strokeStyle = cool ? "rgba(155, 224, 250, 0.72)" : "rgba(255, 156, 78, 0.7)";
@@ -1935,10 +1901,6 @@ export function createExpresswayEngine(
     }
     context.restore();
 
-    // Transverse decks participate in the road-slice painter pass, while the
-    // city was established earlier. Repaint only buildings that are physically
-    // closer than this deck so it cannot cut through their opaque facades.
-    redrawForegroundBuildingOccluders(object.z);
   }
 
   function drawSign(object: Extract<SceneObject, { kind: "sign" }>): void {
@@ -1973,6 +1935,7 @@ export function createExpresswayEngine(
     const visibility = farFade(object.z, FAR_DISTANCE * 0.66, FAR_DISTANCE);
     if (visibility <= 0.002) return;
 
+    occludeGlowRect(boardX, boardY, boardWidth, boardHeight);
     context.save();
     context.globalAlpha = visibility;
     context.strokeStyle = "rgba(118, 132, 135, 0.76)";
@@ -2010,15 +1973,15 @@ export function createExpresswayEngine(
     context.strokeRect(boardX, boardY, boardWidth, boardHeight);
     const glowVisibility = smoothstep(2.5, 11, projectedMax);
     if (glowVisibility > 0.002) {
-      activeGlowLayer.context.save();
-      activeGlowLayer.context.globalAlpha = visibility * glowVisibility;
+      glowLayer.context.save();
+      glowLayer.context.globalAlpha = visibility * glowVisibility;
       drawGlowDot(
         base.x,
         signCenterY,
         clamp(boardWidth * 0.62, 8, 72),
         signGlowColor(sign.family, 0.11),
       );
-      activeGlowLayer.context.restore();
+      glowLayer.context.restore();
     }
     context.restore();
   }
@@ -2048,6 +2011,12 @@ export function createExpresswayEngine(
     const visibility = 1;
 
     if (width < 1.25) {
+      occludeGlowRect(
+        base.x - Math.max(0.7, width * 0.5),
+        base.groundY - 2,
+        Math.max(1.4, width),
+        1.6,
+      );
       context.save();
       context.globalAlpha = visibility;
       context.fillStyle = "#151b1f";
@@ -2079,6 +2048,23 @@ export function createExpresswayEngine(
     const left = base.x - width * 0.5;
     const top = bottom - height;
     const paint = vehiclePaint(vehicle.shade);
+    const vehicleSilhouette: ReadonlyArray<readonly [number, number]> =
+      vehicle.kind === "truck"
+        ? [
+            [left, top],
+            [left + width, top],
+            [left + width, bottom],
+            [left, bottom],
+          ]
+        : [
+            [left, bottom],
+            [left + width * 0.06, top + height * 0.38],
+            [left + width * 0.23, top + height * 0.08],
+            [left + width * 0.77, top + height * 0.08],
+            [left + width * 0.94, top + height * 0.38],
+            [left + width, bottom],
+          ];
+    occludeGlowPolygon(vehicleSilhouette);
 
     context.fillStyle = "rgba(0, 0, 0, 0.45)";
     context.beginPath();
@@ -2111,14 +2097,7 @@ export function createExpresswayEngine(
       context.fillRect(left + width * 0.05, bottom - height * 0.12, width * 0.9, height * 0.12);
     } else {
       context.fillStyle = paint.body;
-      fillPolygon(context, [
-        [left, bottom],
-        [left + width * 0.06, top + height * 0.38],
-        [left + width * 0.23, top + height * 0.08],
-        [left + width * 0.77, top + height * 0.08],
-        [left + width * 0.94, top + height * 0.38],
-        [left + width, bottom],
-      ]);
+      fillPolygon(context, vehicleSilhouette);
       context.fillStyle = "rgba(5, 11, 15, 0.93)";
       fillPolygon(context, [
         [left + width * 0.24, top + height * 0.15],
@@ -2183,6 +2162,12 @@ export function createExpresswayEngine(
     const visibility =
       farFade(object.z, 900, FAR_DISTANCE) *
       smoothstep(0.35, 1.5, height);
+    occludeGlowRect(
+      base.x - width,
+      top.y - width * 0.55,
+      width * 2,
+      base.groundY - top.y + width * 0.55,
+    );
     context.save();
     context.globalAlpha = visibility;
     context.strokeStyle = "rgba(238, 239, 228, 0.95)";
@@ -2215,6 +2200,11 @@ export function createExpresswayEngine(
     else if (object.kind === "overpass") drawOverpass(object);
     else if (object.kind === "bollard") drawBollard(object);
     else drawVehicle(object);
+  }
+
+  function drawDepthSceneItem(item: DepthSceneItem): void {
+    if (item.source === "city") drawCityLayerItem(item.item);
+    else drawSceneObject(item.object);
   }
 
   function drawBarrierSegment(
@@ -2279,6 +2269,7 @@ export function createExpresswayEngine(
       farFade(near.z, FAR_DISTANCE * 0.82, FAR_DISTANCE);
     if (visibility <= 0.002) return;
 
+    occludeGlowPolygon(wallPolygon);
     context.save();
     context.globalAlpha = visibility;
     context.fillStyle = color;
@@ -2311,6 +2302,71 @@ export function createExpresswayEngine(
     context.restore();
   }
 
+  function drawChevronPanels(
+    far: RoadPoint,
+    near: RoadPoint,
+    side: -1 | 1,
+    wallHeight: number,
+    visibility: number,
+  ): void {
+    const lateral = side * (ROAD_HALF_WIDTH + 0.72);
+    const farX = far.center + lateral * far.scale;
+    const nearX = near.center + lateral * near.scale;
+    const farTop = far.y - wallHeight * far.scale;
+    const nearTop = near.y - wallHeight * near.scale;
+    const clipPolygon: ReadonlyArray<readonly [number, number]> = [
+      [farX, far.y],
+      [farX, farTop],
+      [nearX, nearTop],
+      [nearX, near.y + 0.28],
+    ];
+    const panelLength = 9.6;
+    const firstPanel = Math.floor(near.world / panelLength) - 1;
+    const lastPanel = Math.floor(far.world / panelLength) + 1;
+    const projectPanelPoint = (
+      panelNearWorld: number,
+      panelFarWorld: number,
+      longitudinalRatio: number,
+      heightRatio: number,
+    ): readonly [number, number] => {
+      const world = lerp(panelNearWorld, panelFarWorld, longitudinalRatio);
+      const point = projectedAt(world - totalDistanceMeters, lateral);
+      return [
+        point.x,
+        point.groundY - wallHeight * point.scale * heightRatio,
+      ];
+    };
+
+    context.save();
+    context.beginPath();
+    context.moveTo(clipPolygon[0][0], clipPolygon[0][1]);
+    for (let index = 1; index < clipPolygon.length; index += 1) {
+      context.lineTo(clipPolygon[index][0], clipPolygon[index][1]);
+    }
+    context.closePath();
+    context.clip();
+    context.globalAlpha = visibility;
+    context.fillStyle = "#bd2f29";
+
+    for (let panel = firstPanel; panel <= lastPanel; panel += 1) {
+      const panelNearWorld = panel * panelLength;
+      const panelFarWorld = panelNearWorld + panelLength;
+      if (panelFarWorld < near.world || panelNearWorld > far.world) continue;
+      // Every panel points forward along the carriageway. Perspective turns
+      // that single physical direction into the correct left/right screen
+      // direction on curves; alternating it by mesh cell was visually false.
+      fillPolygon(context, [
+        projectPanelPoint(panelNearWorld, panelFarWorld, 0.08, 0.1),
+        projectPanelPoint(panelNearWorld, panelFarWorld, 0.5, 0.1),
+        projectPanelPoint(panelNearWorld, panelFarWorld, 0.94, 0.5),
+        projectPanelPoint(panelNearWorld, panelFarWorld, 0.5, 0.9),
+        projectPanelPoint(panelNearWorld, panelFarWorld, 0.08, 0.9),
+        projectPanelPoint(panelNearWorld, panelFarWorld, 0.48, 0.5),
+      ]);
+    }
+    context.restore();
+  }
+
   function drawBarrierSlice(far: RoadPoint, near: RoadPoint): void {
     if (far.z <= near.z + 0.0001) return;
     const world = (far.world + near.world) * 0.5;
@@ -2323,7 +2379,7 @@ export function createExpresswayEngine(
     for (const side of [-1, 1] as const) {
       const height = side < 0 ? 0.9 : 0.84;
       const baseColor = chevrons
-        ? alternating ? "#b9bfbd" : "#adb4b2"
+        ? "#b7bcba"
         : side < 0
           ? alternating ? "#596163" : "#4e5658"
           : alternating ? "#60686a" : "#555e60";
@@ -2364,31 +2420,13 @@ export function createExpresswayEngine(
         farFade(near.z, 860, FAR_DISTANCE) *
         smoothstep(0.35, 1.5, near.scale * height);
       if (chevrons && chevronVisibility > 0.002) {
-        const lateral = side * (ROAD_HALF_WIDTH + 0.72);
-        const farX = far.center + lateral * far.scale;
-        const nearX = near.center + lateral * near.scale;
-        const farTop = far.y - height * far.scale;
-        const nearTop = near.y - height * near.scale;
-        context.save();
-        context.globalAlpha = chevronVisibility;
-        context.fillStyle = "rgba(188, 41, 31, 0.94)";
-        // Chevron direction is tied to a fixed real-world panel cell. Using
-        // the adaptive mesh index made the motif crawl whenever LOD changed.
-        const reverse = (
-          (Math.floor(world / 9.6) + (side > 0 ? 1 : 0)) & 1
-        ) === 0;
-        fillPolygon(context, reverse ? [
-          [farX, lerp(farTop, far.y, 0.08)],
-          [nearX, lerp(nearTop, near.y, 0.47)],
-          [nearX, lerp(nearTop, near.y, 0.92)],
-          [farX, lerp(farTop, far.y, 0.53)],
-        ] : [
-          [farX, lerp(farTop, far.y, 0.47)],
-          [nearX, lerp(nearTop, near.y, 0.08)],
-          [nearX, lerp(nearTop, near.y, 0.53)],
-          [farX, lerp(farTop, far.y, 0.92)],
-        ]);
-        context.restore();
+        drawChevronPanels(
+          far,
+          near,
+          side,
+          height,
+          chevronVisibility,
+        );
       }
 
       if (soundwall && (side < 0 || locationLocal(world) < 430)) {
@@ -2428,54 +2466,57 @@ export function createExpresswayEngine(
   }
 
   function drawDepthScene(): void {
-    let objectIndex = 0;
-    let maskIndex = 0;
-    const applyBuildingMasksThrough = (z: number): void => {
-      while (
-        maskIndex < buildingGlowMasks.length &&
-        buildingGlowMasks[maskIndex].z > z
-      ) {
-        const mask = buildingGlowMasks[maskIndex];
-        occludeGlowRect(
-          mask.rect.x,
-          mask.rect.y,
-          mask.rect.width,
-          mask.rect.height,
-        );
-        occludeGlowPolygon(mask.sideFace);
-        maskIndex += 1;
+    depthSceneItems.length = 0;
+    for (const item of cityLayerItems) {
+      if (item.z >= NEAR_DISTANCE && item.z <= CITY_FAR_DISTANCE) {
+        depthSceneItems.push({ source: "city", z: item.z, item });
       }
+    }
+    for (const object of sceneObjects) {
+      depthSceneItems.push({ source: "road", z: object.z, object });
+    }
+    depthSceneItems.sort((first, second) => second.z - first.z);
+
+    const drawRoadInterval = (far: RoadPoint, near: RoadPoint): void => {
+      if (far.z <= near.z + 0.0001) return;
+      drawRoadSurfaceSlice(far, near);
+      drawRoadMarkingsSlice(far, near);
+      drawBarrierSlice(far, near);
     };
+
+    let itemIndex = 0;
     for (let index = roadPoints.length - 1; index >= 1; index -= 1) {
       const far = roadPoints[index];
       const near = roadPoints[index - 1];
 
-      while (objectIndex < sceneObjects.length && sceneObjects[objectIndex].z > far.z) {
-        applyBuildingMasksThrough(sceneObjects[objectIndex].z);
-        drawSceneObject(sceneObjects[objectIndex]);
-        objectIndex += 1;
+      while (
+        itemIndex < depthSceneItems.length &&
+        depthSceneItems[itemIndex].z > far.z
+      ) {
+        drawDepthSceneItem(depthSceneItems[itemIndex]);
+        itemIndex += 1;
       }
 
-      drawRoadSurfaceSlice(far, near);
-      drawRoadMarkingsSlice(far, near);
-
-      let barrierFar = far;
-
-      while (objectIndex < sceneObjects.length && sceneObjects[objectIndex].z > near.z) {
-        const object = sceneObjects[objectIndex];
-        const barrierSplit = roadPointAt(
-          clamp(object.z, near.z, barrierFar.z),
-        );
-        drawBarrierSlice(barrierFar, barrierSplit);
-        applyBuildingMasksThrough(object.z);
-        drawSceneObject(object);
-        barrierFar = barrierSplit;
-        objectIndex += 1;
+      let intervalFar = far;
+      while (
+        itemIndex < depthSceneItems.length &&
+        depthSceneItems[itemIndex].z > near.z
+      ) {
+        const item = depthSceneItems[itemIndex];
+        const split = roadPointAt(clamp(item.z, near.z, intervalFar.z));
+        drawRoadInterval(intervalFar, split);
+        drawDepthSceneItem(item);
+        intervalFar = split;
+        itemIndex += 1;
       }
 
-      drawBarrierSlice(barrierFar, near);
+      drawRoadInterval(intervalFar, near);
     }
-    applyBuildingMasksThrough(-Infinity);
+
+    while (itemIndex < depthSceneItems.length) {
+      drawDepthSceneItem(depthSceneItems[itemIndex]);
+      itemIndex += 1;
+    }
 
     for (const [key, trail] of lightTrailPositions) {
       if (frameNumber - trail.frame > 3) lightTrailPositions.delete(key);
@@ -2536,34 +2577,30 @@ export function createExpresswayEngine(
     context.globalCompositeOperation = "screen";
     context.globalAlpha = quality === "MOBILE" ? 0.68 : 0.82;
     context.filter = `blur(${Math.max(3, Math.round(pixelRatio * (quality === "MOBILE" ? 4 : 7)))}px)`;
-    for (const layer of [glowLayer, sceneGlowLayer]) {
-      context.drawImage(
-        layer.canvas,
-        0,
-        0,
-        layer.canvas.width,
-        layer.canvas.height,
-        0,
-        0,
-        canvas.width,
-        canvas.height,
-      );
-    }
+    context.drawImage(
+      glowLayer.canvas,
+      0,
+      0,
+      glowLayer.canvas.width,
+      glowLayer.canvas.height,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
     context.filter = "none";
     context.globalAlpha = 0.28;
-    for (const layer of [glowLayer, sceneGlowLayer]) {
-      context.drawImage(
-        layer.canvas,
-        0,
-        0,
-        layer.canvas.width,
-        layer.canvas.height,
-        0,
-        0,
-        canvas.width,
-        canvas.height,
-      );
-    }
+    context.drawImage(
+      glowLayer.canvas,
+      0,
+      0,
+      glowLayer.canvas.width,
+      glowLayer.canvas.height,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
     context.restore();
     configureContextTransforms();
   }
@@ -2613,11 +2650,9 @@ export function createExpresswayEngine(
     if (destroyed || cssWidth <= 0 || cssHeight <= 0) return;
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     clearGlow();
-    activeGlowLayer = glowLayer;
     drawSky();
     buildRoadPoints();
-    drawCity();
-    activeGlowLayer = sceneGlowLayer;
+    collectCityLayerItems();
     collectSceneObjects();
     drawDepthScene();
     drawHeadlightReflections();
