@@ -22,6 +22,7 @@ export default function Home() {
   const [telemetry, setTelemetry] = useState<Telemetry>(INITIAL_TELEMETRY);
   const [paused, setPaused] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const [enhancedMotionBlur, setEnhancedMotionBlur] = useState(false);
   const [hudVisible, setHudVisible] = useState(true);
   const [enginePrepared, setEnginePrepared] = useState(false);
   const [experienceStarted, setExperienceStarted] = useState(false);
@@ -85,6 +86,14 @@ export default function Home() {
     setSoundEnabled(await engine.toggleSound());
   }, []);
 
+  const toggleEnhancedMotionBlur = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    setEnhancedMotionBlur(
+      engine.setEnhancedMotionBlur(!engine.isEnhancedMotionBlur()),
+    );
+  }, []);
+
   const toggleFullscreen = useCallback(async () => {
     if (!document.fullscreenElement) {
       await document.documentElement.requestFullscreen?.();
@@ -115,6 +124,8 @@ export default function Home() {
         adjustSpeed(-5);
       } else if (event.key.toLowerCase() === "m") {
         void toggleSound();
+      } else if (event.key.toLowerCase() === "b") {
+        toggleEnhancedMotionBlur();
       } else if (event.key.toLowerCase() === "f") {
         void toggleFullscreen();
       } else if (event.key.toLowerCase() === "h") {
@@ -129,6 +140,7 @@ export default function Home() {
     beginExperience,
     experienceStarted,
     toggleFullscreen,
+    toggleEnhancedMotionBlur,
     togglePause,
     toggleSound,
   ]);
@@ -250,6 +262,19 @@ export default function Home() {
             </button>
             <button
               type="button"
+              onClick={toggleEnhancedMotionBlur}
+              aria-label={
+                enhancedMotionBlur
+                  ? "街灯とテールライトの光跡強調を無効にする"
+                  : "街灯とテールライトの光跡強調を有効にする"
+              }
+              aria-pressed={enhancedMotionBlur}
+              title="光跡強調 [B]"
+            >
+              <span aria-hidden="true">MB+</span>
+            </button>
+            <button
+              type="button"
               onClick={() => void toggleFullscreen()}
               aria-label="フルスクリーン表示"
               title="フルスクリーン [F]"
@@ -290,7 +315,7 @@ export default function Home() {
 
       {experienceStarted && (
         <p className="keyboard-hint" aria-hidden="true">
-          SPACE 一時停止　·　↑↓ 速度　·　M 環境音　·　F 全画面
+          SPACE 一時停止　·　↑↓ 速度　·　M 環境音　·　B 光跡強調　·　F 全画面
         </p>
       )}
     </main>

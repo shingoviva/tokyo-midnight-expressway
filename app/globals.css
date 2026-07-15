@@ -599,6 +599,22 @@ button {
   }
 }
 
+@media (max-width: 420px) {
+  .drive-controls {
+    gap: 3px;
+    padding: 5px;
+  }
+
+  .drive-controls button {
+    width: 38px;
+    height: 38px;
+  }
+
+  .control-divider {
+    margin-inline: 0;
+  }
+}
+
 @media (max-height: 560px) {
   .start-lockup h1 {
     margin-block: 8px 5px;

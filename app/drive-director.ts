@@ -10,6 +10,7 @@ export type DriveEventState = {
   progressMeters: number;
   durationMeters: number;
   side: -1 | 1;
+  variant: 0 | 1 | 2;
 };
 
 export type DriveDirectorState = {
@@ -88,14 +89,20 @@ export function sampleDriveDirector(
       localMeters < candidate.start + candidate.duration,
   );
   const event = slot
-    ? {
-        kind: slot.kind,
-        progressMeters: localMeters - slot.start,
-        durationMeters: slot.duration,
-        side: (hashInteger(sessionSeed + cycleIndex * 31 + slot.start) & 1)
-          ? (1 as const)
-          : (-1 as const),
-      }
+    ? (() => {
+        const eventHash = hashInteger(
+          sessionSeed + cycleIndex * 31 + slot.start,
+        );
+        return {
+          kind: slot.kind,
+          progressMeters: localMeters - slot.start,
+          durationMeters: slot.duration,
+          side: (eventHash & 1)
+            ? (1 as const)
+            : (-1 as const),
+          variant: ((eventHash >>> 1) % 3) as 0 | 1 | 2,
+        };
+      })()
     : null;
 
   return {
@@ -105,4 +112,3 @@ export function sampleDriveDirector(
     event,
   };
 }
-

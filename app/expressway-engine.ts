@@ -33,6 +33,8 @@ export type ExpresswayEngine = {
   toggleSound(): Promise<boolean>;
   setSoundEnabled(enabled: boolean): Promise<boolean>;
   isSoundEnabled(): boolean;
+  setEnhancedMotionBlur(enabled: boolean): boolean;
+  isEnhancedMotionBlur(): boolean;
 };
 
 type DrawContext =
@@ -73,6 +75,10 @@ type TrafficVehicle = {
   role: VehicleRole;
   lanePosition?: number;
   signalSide?: -1 | 1;
+  laneChangeFrom?: -1 | 1;
+  laneChangeTo?: -1 | 1;
+  laneChangeStartZ?: number;
+  laneChangeEndZ?: number;
 };
 
 type SceneObject =
@@ -93,6 +99,14 @@ type CityLayerItem =
       block: number;
       nearWorld: number;
       farWorld: number;
+    }
+  | {
+      kind: "elevated-pier";
+      z: number;
+      spec: ElevatedSpanSpec;
+      block: number;
+      world: number;
+      terminal: boolean;
     };
 
 type DepthSceneItem =
@@ -165,6 +179,7 @@ const SCENE_LENGTH = LOCATION_LENGTH * LOCATION_NAMES.length;
 const LIGHT_SPACING = 36;
 const SIGN_SPACING = 560;
 const MAX_LIGHT_TRAIL_HISTORY = 96;
+const MAX_TAIL_LIGHT_TRAIL_HISTORY = 64;
 
 // Longitudinal decks use real-world meter ranges. Their approaches continue
 // beyond the visible core, descend and curve behind the city instead of ending
@@ -415,6 +430,7 @@ export function createExpresswayEngine(
   let smoothedFps = 60;
   let frameNumber = 0;
   let soundEnabled = false;
+  let enhancedMotionBlur = false;
   let audioRig: AudioRig | null = null;
   let audioUpdateTime = 0;
   let resizeObserver: ResizeObserver | null = null;
@@ -464,13 +480,61 @@ export function createExpresswayEngine(
     number,
     { x: number; y: number; frame: number }
   >();
+  const tailLightTrailPositions = new Map<
+    number,
+    { leftX: number; rightX: number; y: number; frame: number }
+  >();
+
+  function vehicleDimensions(kind: VehicleKind): {
+    width: number;
+    height: number;
+  } {
+    return kind === "truck"
+      ? { width: 2.42, height: 3.45 }
+      : kind === "minivan"
+        ? { width: 1.9, height: 1.72 }
+        : { width: 1.82, height: 1.35 };
+  }
+
+  function safeVehicleLanePosition(
+    vehicle: Pick<TrafficVehicle, "kind">,
+    requestedPosition: number,
+  ): number {
+    const dimensions = vehicleDimensions(vehicle.kind);
+    const maximumCenter = ROAD_HALF_WIDTH - dimensions.width * 0.5 - 0.24;
+    return clamp(requestedPosition, -maximumCenter, maximumCenter);
+  }
+
+  function scheduleAmbientManeuver(
+    vehicle: TrafficVehicle,
+    seed: number,
+  ): void {
+    vehicle.laneChangeFrom = undefined;
+    vehicle.laneChangeTo = undefined;
+    vehicle.laneChangeStartZ = undefined;
+    vehicle.laneChangeEndZ = undefined;
+    if (seeded(seed, 397) < 0.44 || vehicle.z < 115) return;
+
+    const maximumStartZ = Math.min(vehicle.z - 18, 1_360);
+    const minimumStartZ = Math.min(maximumStartZ, 115);
+    const startZ = lerp(
+      minimumStartZ,
+      maximumStartZ,
+      seeded(seed, 401),
+    );
+    const durationZ = 34 + seeded(seed, 409) * 52;
+    vehicle.laneChangeFrom = vehicle.lane;
+    vehicle.laneChangeTo = vehicle.lane === 1 ? -1 : 1;
+    vehicle.laneChangeStartZ = startZ;
+    vehicle.laneChangeEndZ = Math.max(24, startZ - durationZ);
+  }
 
   const initialVehicleCount = 20;
   const initialVehicleSpacing = lerp(82, 52, directorState.intensity);
   for (let index = 0; index < initialVehicleCount; index += 1) {
     const vehicleSeed = index + sessionSeed;
     const kindRoll = seeded(vehicleSeed, 91);
-    vehicles.push({
+    const vehicle: TrafficVehicle = {
       id: index,
       z: 46 + index * initialVehicleSpacing + seeded(vehicleSeed, 17) * 38,
       lane: seeded(vehicleSeed, 41) > 0.5 ? 1 : -1,
@@ -479,7 +543,9 @@ export function createExpresswayEngine(
       shade: seeded(vehicleSeed, 53),
       generation: 0,
       role: "ambient",
-    });
+    };
+    scheduleAmbientManeuver(vehicle, vehicleSeed * 173);
+    vehicles.push(vehicle);
   }
 
   // Reused for every scripted encounter. The director mutates this single
@@ -726,6 +792,7 @@ export function createExpresswayEngine(
     focalLength = cssHeight * (cssWidth < cssHeight ? 0.72 : 0.8);
     horizon = cssHeight * (cssWidth < cssHeight ? 0.46 : 0.62);
     lightTrailPositions.clear();
+    tailLightTrailPositions.clear();
 
     const backingWidth = Math.max(1, Math.round(cssWidth * pixelRatio));
     const backingHeight = Math.max(1, Math.round(cssHeight * pixelRatio));
@@ -1332,8 +1399,15 @@ export function createExpresswayEngine(
         createLandmarkOptions(),
         item.landmark,
       );
-    } else {
+    } else if (item.kind === "elevated") {
       drawElevatedDeckSlice(item);
+    } else {
+      drawElevatedPier(
+        item.spec,
+        item.block,
+        item.world,
+        item.terminal,
+      );
     }
   }
 
@@ -1827,6 +1901,49 @@ export function createExpresswayEngine(
           farWorld: clippedFarWorld,
         });
       }
+
+      // Piers have their own world-space depth items. Keeping them out of the
+      // adaptive deck slices prevents a support from changing draw order when
+      // the road tessellation changes between far, middle and near distance.
+      const supportSpacing = 42;
+      const firstSupport = Math.ceil(start / supportSpacing) * supportSpacing;
+      const terminalWorlds = [
+        block * SCENE_LENGTH + spec.coreStart,
+        block * SCENE_LENGTH + spec.coreEnd,
+      ];
+      for (
+        let supportWorld = firstSupport;
+        supportWorld <= end;
+        supportWorld += supportSpacing
+      ) {
+        if (
+          terminalWorlds.some(
+            (terminalWorld) => Math.abs(terminalWorld - supportWorld) < 15,
+          )
+        ) continue;
+        const z = supportWorld - totalDistanceMeters;
+        if (z < NEAR_DISTANCE || z > FAR_DISTANCE) continue;
+        target.push({
+          kind: "elevated-pier",
+          z,
+          spec,
+          block,
+          world: supportWorld,
+          terminal: false,
+        });
+      }
+      for (const terminalWorld of terminalWorlds) {
+        const z = terminalWorld - totalDistanceMeters;
+        if (z < NEAR_DISTANCE || z > FAR_DISTANCE) continue;
+        target.push({
+          kind: "elevated-pier",
+          z,
+          spec,
+          block,
+          world: terminalWorld,
+          terminal: true,
+        });
+      }
     }
   }
 
@@ -1838,18 +1955,6 @@ export function createExpresswayEngine(
     const near = roadPointAt(nearWorld - totalDistanceMeters);
     const farState = elevatedState(spec, far.world - block * SCENE_LENGTH);
     const nearState = elevatedState(spec, near.world - block * SCENE_LENGTH);
-
-    const supportSpacing = 42;
-    const supportWorld = Math.floor(farWorld / supportSpacing) * supportSpacing;
-    if (supportWorld > nearWorld + 0.001) {
-      drawElevatedPier(spec, block, supportWorld);
-    }
-    for (const terminalLocal of [spec.coreStart, spec.coreEnd]) {
-      const terminalWorld = block * SCENE_LENGTH + terminalLocal;
-      if (terminalWorld > nearWorld && terminalWorld <= farWorld) {
-        drawElevatedPier(spec, block, terminalWorld, true);
-      }
-    }
 
     const farY = far.y - farState.height * far.scale;
     const nearY = near.y - nearState.height * near.scale;
@@ -1956,16 +2061,23 @@ export function createExpresswayEngine(
     const progress = event.progressMeters;
     const duration = event.durationMeters;
     const side = event.side;
+    const variant = event.variant;
     let z = FAR_DISTANCE;
     let lanePosition = side * 1.72;
 
     eventVehicle.signalSide = undefined;
     if (event.kind === "taxi-overtake") {
-      const turnDistance = 430;
+      const turnDistance = [390, 470, 540][variant];
+      const peakDistance = [145, 178, 205][variant];
       z = progress < turnDistance
-        ? lerp(3.2, 165, smoothstep(0, turnDistance, progress))
-        : lerp(165, 0.05, smoothstep(turnDistance, duration, progress));
-      lanePosition = side * lerp(4.9, 1.72, smoothstep(0, 125, progress));
+        ? lerp(2.8, peakDistance, smoothstep(0, turnDistance, progress))
+        : lerp(peakDistance, 0.05, smoothstep(turnDistance, duration, progress));
+      const taxiTargetSide = variant === 1 ? -side : side;
+      lanePosition = lerp(
+        side * 1.72,
+        taxiTargetSide * (variant === 2 ? 1.54 : 1.72),
+        smoothstep(duration * 0.31, duration * 0.64, progress),
+      );
       eventVehicle.kind = "sedan";
       eventVehicle.role = "taxi";
       eventVehicle.shade = 0.08;
@@ -1978,7 +2090,11 @@ export function createExpresswayEngine(
       lanePosition = lerp(
         side * 1.72,
         -side * 1.72,
-        smoothstep(duration * 0.48, duration * 0.76, progress),
+        smoothstep(
+          duration * [0.36, 0.48, 0.58][variant],
+          duration * [0.62, 0.76, 0.86][variant],
+          progress,
+        ),
       );
       eventVehicle.kind = "truck";
       eventVehicle.role = "merging-truck";
@@ -1990,12 +2106,14 @@ export function createExpresswayEngine(
         0.05,
         smoothstep(0, duration, progress),
       );
-      lanePosition = side * 2.52;
+      const shoulderOffset = [2.08, 2.28, 2.42][variant];
+      lanePosition = side * shoulderOffset;
       eventVehicle.kind = "minivan";
       eventVehicle.role = "maintenance";
       eventVehicle.shade = 0.94;
     }
 
+    lanePosition = safeVehicleLanePosition(eventVehicle, lanePosition);
     eventVehicle.z = z;
     eventVehicle.lane = lanePosition >= 0 ? 1 : -1;
     eventVehicle.lanePosition = lanePosition;
@@ -2149,11 +2267,12 @@ export function createExpresswayEngine(
       const deltaY = top.y - previous.y;
       const distance = Math.hypot(deltaX, deltaY);
       if (distance > 0.08) {
-        const trailLength = Math.min(7.5, distance);
+        const trailLength = Math.min(enhancedMotionBlur ? 17 : 7.5, distance);
         const ratio = trailLength / distance;
         const glowContext = glowLayer.context;
         glowContext.save();
-        glowContext.globalAlpha = 0.14 * visibility * lampEnergy;
+        glowContext.globalAlpha =
+          (enhancedMotionBlur ? 0.24 : 0.14) * visibility * lampEnergy;
         glowContext.strokeStyle = cool ? "rgba(155, 224, 250, 0.72)" : "rgba(255, 156, 78, 0.7)";
         glowContext.lineWidth = Math.max(0.9, lampRadius * 1.16);
         glowContext.lineCap = "round";
@@ -2553,15 +2672,64 @@ export function createExpresswayEngine(
     return { body: "#6b2220", highlight: "#9a4a43" };
   }
 
+  function drawTailLightMotionTrail(
+    vehicle: TrafficVehicle,
+    leftX: number,
+    rightX: number,
+    y: number,
+    radius: number,
+    visibility: number,
+  ): void {
+    const previous = tailLightTrailPositions.get(vehicle.id);
+    if (
+      enhancedMotionBlur &&
+      previous &&
+      frameNumber - previous.frame <= 2
+    ) {
+      const deltaX = (leftX + rightX) * 0.5 -
+        (previous.leftX + previous.rightX) * 0.5;
+      const deltaY = y - previous.y;
+      const distance = Math.hypot(deltaX, deltaY);
+      if (distance > 0.08) {
+        const trailLength = Math.min(22, distance);
+        const ratio = trailLength / distance;
+        const glowContext = glowLayer.context;
+        glowContext.save();
+        glowContext.globalAlpha = 0.23 * visibility;
+        glowContext.strokeStyle = "rgba(255, 48, 29, 0.82)";
+        glowContext.lineWidth = Math.max(1, radius * 0.82);
+        glowContext.lineCap = "round";
+        for (const [currentX, previousX] of [
+          [leftX, previous.leftX],
+          [rightX, previous.rightX],
+        ]) {
+          glowContext.beginPath();
+          glowContext.moveTo(
+            currentX - (currentX - previousX) * ratio,
+            y - deltaY * ratio,
+          );
+          glowContext.lineTo(currentX, y);
+          glowContext.stroke();
+        }
+        glowContext.restore();
+      }
+    }
+    tailLightTrailPositions.set(vehicle.id, {
+      leftX,
+      rightX,
+      y,
+      frame: frameNumber,
+    });
+  }
+
   function drawVehicle(object: Extract<SceneObject, { kind: "vehicle" }>): void {
     const vehicle = object.vehicle;
-    const laneCenter = vehicle.lanePosition ?? vehicle.lane * 1.72;
+    const laneCenter = safeVehicleLanePosition(
+      vehicle,
+      vehicle.lanePosition ?? vehicle.lane * 1.72,
+    );
     const base = projectedAt(object.z, laneCenter);
-    const dimensions = vehicle.kind === "truck"
-      ? { width: 2.42, height: 3.45 }
-      : vehicle.kind === "minivan"
-        ? { width: 1.9, height: 1.72 }
-        : { width: 1.82, height: 1.35 };
+    const dimensions = vehicleDimensions(vehicle.kind);
     const width = dimensions.width * base.scale;
     const height = dimensions.height * base.scale;
     if (base.x + width < -12 || base.x - width > cssWidth + 12) return;
@@ -2584,6 +2752,15 @@ export function createExpresswayEngine(
         base.groundY - 2,
         Math.max(1.4, width),
         1.6,
+      );
+      const tinyTailOffset = Math.max(0.55, width * 0.34);
+      drawTailLightMotionTrail(
+        vehicle,
+        base.x - tinyTailOffset,
+        base.x + tinyTailOffset,
+        base.groundY - 0.6,
+        1.4,
+        visibility,
       );
       for (const side of [-1, 1]) {
         const tailX = base.x + side * Math.max(0.55, width * 0.34);
@@ -2717,6 +2894,14 @@ export function createExpresswayEngine(
     const tailOffset = width * 0.34;
     const tailWidth = clamp(width * 0.12, 1, 15);
     const tailHeight = clamp(height * 0.075, 1, 8);
+    drawTailLightMotionTrail(
+      vehicle,
+      base.x - tailOffset,
+      base.x + tailOffset,
+      tailY + tailHeight * 0.5,
+      clamp(base.scale * 1.25, 3, 26),
+      visibility,
+    );
     for (const side of [-1, 1]) {
       const tailX = base.x + side * tailOffset;
       context.fillStyle = "#f13b2f";
@@ -3146,6 +3331,14 @@ export function createExpresswayEngine(
       if (oldestKey === undefined) break;
       lightTrailPositions.delete(oldestKey);
     }
+    for (const [key, trail] of tailLightTrailPositions) {
+      if (frameNumber - trail.frame > 3) tailLightTrailPositions.delete(key);
+    }
+    while (tailLightTrailPositions.size > MAX_TAIL_LIGHT_TRAIL_HISTORY) {
+      const oldestKey = tailLightTrailPositions.keys().next().value;
+      if (oldestKey === undefined) break;
+      tailLightTrailPositions.delete(oldestKey);
+    }
   }
 
   function drawHeadlightReflections(): void {
@@ -3255,12 +3448,42 @@ export function createExpresswayEngine(
     vehicle.shade = seeded(seed, 389);
     vehicle.role = "ambient";
     vehicle.signalSide = undefined;
+    scheduleAmbientManeuver(vehicle, seed);
   }
 
   function updateVehicles(deltaSeconds: number): void {
     const paceFactor = 0.7 + speedKmh / 165;
     for (const vehicle of vehicles) {
       vehicle.z -= vehicle.closingSpeed * paceFactor * deltaSeconds;
+      if (
+        vehicle.laneChangeFrom !== undefined &&
+        vehicle.laneChangeTo !== undefined &&
+        vehicle.laneChangeStartZ !== undefined &&
+        vehicle.laneChangeEndZ !== undefined
+      ) {
+        const laneChangeProgress = smoothstep(
+          0,
+          1,
+          (vehicle.laneChangeStartZ - vehicle.z) /
+            Math.max(
+              0.001,
+              vehicle.laneChangeStartZ - vehicle.laneChangeEndZ,
+            ),
+        );
+        vehicle.lanePosition = lerp(
+          vehicle.laneChangeFrom * 1.72,
+          vehicle.laneChangeTo * 1.72,
+          laneChangeProgress,
+        );
+        if (vehicle.z <= vehicle.laneChangeEndZ) {
+          vehicle.lane = vehicle.laneChangeTo;
+          vehicle.lanePosition = undefined;
+          vehicle.laneChangeFrom = undefined;
+          vehicle.laneChangeTo = undefined;
+          vehicle.laneChangeStartZ = undefined;
+          vehicle.laneChangeEndZ = undefined;
+        }
+      }
       if (vehicle.z < -16) recycleVehicle(vehicle);
     }
   }
@@ -3501,6 +3724,7 @@ export function createExpresswayEngine(
     depthSceneItems.length = 0;
     vehicles.length = 0;
     lightTrailPositions.clear();
+    tailLightTrailPositions.clear();
     noisePattern = null;
     noiseImageData = null;
     skyGradientCache = null;
@@ -3545,6 +3769,16 @@ export function createExpresswayEngine(
     setSoundEnabled,
     isSoundEnabled(): boolean {
       return soundEnabled;
+    },
+    setEnhancedMotionBlur(enabled: boolean): boolean {
+      if (enhancedMotionBlur === enabled) return enhancedMotionBlur;
+      enhancedMotionBlur = enabled;
+      lightTrailPositions.clear();
+      tailLightTrailPositions.clear();
+      return enhancedMotionBlur;
+    },
+    isEnhancedMotionBlur(): boolean {
+      return enhancedMotionBlur;
     },
   };
 }

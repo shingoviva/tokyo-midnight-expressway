@@ -33,3 +33,16 @@ test("scripted encounters occupy separated windows and repeat safely", () => {
   );
 });
 
+test("repeated encounters receive deterministic movement variants", () => {
+  const variants = new Set();
+  for (let cycle = 0; cycle < 8; cycle += 1) {
+    const event = sampleDriveDirector(
+      cycle * DRIVE_DIRECTOR_CYCLE_METERS + 400,
+      99,
+    ).event;
+    assert.equal(event?.kind, "taxi-overtake");
+    assert.ok(event.variant >= 0 && event.variant <= 2);
+    variants.add(event.variant);
+  }
+  assert.ok(variants.size > 1);
+});
