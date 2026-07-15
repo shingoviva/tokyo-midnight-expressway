@@ -23,6 +23,8 @@ export default function Home() {
   const [paused, setPaused] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [hudVisible, setHudVisible] = useState(true);
+  const [enginePrepared, setEnginePrepared] = useState(false);
+  const [experienceStarted, setExperienceStarted] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -35,12 +37,12 @@ export default function Home() {
     });
 
     engineRef.current = engine;
+    setEnginePrepared(true);
     let reducedMotionFrame = 0;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       engine.setPaused(true);
       reducedMotionFrame = window.requestAnimationFrame(() => setPaused(true));
     }
-    engine.start();
 
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
@@ -56,6 +58,13 @@ export default function Home() {
       engine.destroy();
       engineRef.current = null;
     };
+  }, []);
+
+  const beginExperience = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.start();
+    setExperienceStarted(true);
   }, []);
 
   const togglePause = useCallback(() => {
@@ -89,7 +98,10 @@ export default function Home() {
       const target = event.target as HTMLElement | null;
       if (target?.matches("button, input, select, textarea")) return;
 
-      if (event.code === "Space" || event.key.toLowerCase() === "p") {
+      if (!experienceStarted && (event.code === "Space" || event.key === "Enter")) {
+        event.preventDefault();
+        beginExperience();
+      } else if (event.code === "Space" || event.key.toLowerCase() === "p") {
         event.preventDefault();
         togglePause();
       } else if (event.key === "ArrowUp" || event.key.toLowerCase() === "w") {
@@ -112,10 +124,21 @@ export default function Home() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [adjustSpeed, toggleFullscreen, togglePause, toggleSound]);
+  }, [
+    adjustSpeed,
+    beginExperience,
+    experienceStarted,
+    toggleFullscreen,
+    togglePause,
+    toggleSound,
+  ]);
 
   return (
-    <main className="drive-shell" data-ready={ready}>
+    <main
+      className="drive-shell"
+      data-ready={ready}
+      data-started={experienceStarted}
+    >
       <canvas
         ref={canvasRef}
         className="drive-canvas"
@@ -128,7 +151,31 @@ export default function Home() {
       <div className="cinema-frame" aria-hidden="true" />
       <div className="optical-noise" aria-hidden="true" />
 
-      <section className={`hud ${hudVisible ? "is-visible" : "is-hidden"}`}>
+      <section
+        className={`start-screen ${experienceStarted ? "is-hidden" : ""}`}
+        aria-label="映像作品の開始"
+        aria-hidden={experienceStarted}
+      >
+        <div className="start-lockup">
+          <span>GENERATIVE FILM 001</span>
+          <h1>AFTER MIDNIGHT</h1>
+          <p>首都高速・無限夜行</p>
+        </div>
+        <button
+          type="button"
+          className="start-button"
+          onClick={beginExperience}
+          disabled={!enginePrepared || experienceStarted}
+          tabIndex={experienceStarted ? -1 : 0}
+        >
+          <span>START</span>
+          <i aria-hidden="true">→</i>
+        </button>
+        <p className="start-note">TAP TO BEGIN · SOUND OPTIONAL</p>
+      </section>
+
+      {experienceStarted && (
+        <section className={`hud ${hudVisible ? "is-visible" : "is-hidden"}`}>
         <header className="hud-header">
           <div className="title-lockup">
             <div className="route-disc" aria-hidden="true">
@@ -219,9 +266,10 @@ export default function Home() {
             </button>
           </nav>
         </footer>
-      </section>
+        </section>
+      )}
 
-      {!hudVisible && (
+      {experienceStarted && !hudVisible && (
         <button
           type="button"
           className="restore-hud"
@@ -232,15 +280,19 @@ export default function Home() {
         </button>
       )}
 
-      <div className="startup-title" aria-hidden="true">
-        <span>GENERATIVE FILM 001</span>
-        <strong>首都、深夜環状。</strong>
-        <i />
-      </div>
+      {experienceStarted && (
+        <div className="startup-title" aria-hidden="true">
+          <span>GENERATIVE FILM 001</span>
+          <strong>首都、深夜環状。</strong>
+          <i />
+        </div>
+      )}
 
-      <p className="keyboard-hint" aria-hidden="true">
-        SPACE 一時停止　·　↑↓ 速度　·　M 環境音　·　F 全画面
-      </p>
+      {experienceStarted && (
+        <p className="keyboard-hint" aria-hidden="true">
+          SPACE 一時停止　·　↑↓ 速度　·　M 環境音　·　F 全画面
+        </p>
+      )}
     </main>
   );
 }

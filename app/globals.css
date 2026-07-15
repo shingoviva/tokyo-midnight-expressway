@@ -29,6 +29,7 @@ body {
 
 button {
   font: inherit;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .drive-shell {
@@ -85,6 +86,120 @@ button {
     );
   background-size: 91px 77px, 67px 83px;
   animation: grain-shift 0.24s steps(2, end) infinite;
+}
+
+.start-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding:
+    max(28px, env(safe-area-inset-top))
+    max(24px, env(safe-area-inset-right))
+    max(28px, env(safe-area-inset-bottom))
+    max(24px, env(safe-area-inset-left));
+  background:
+    radial-gradient(circle at 50% 56%, rgba(18, 44, 55, 0.3), transparent 38%),
+    linear-gradient(180deg, rgba(1, 4, 7, 0.86), rgba(1, 4, 7, 0.96));
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 700ms ease,
+    visibility 0s linear 0s;
+}
+
+.start-screen.is-hidden {
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 700ms ease,
+    visibility 0s linear 700ms;
+}
+
+.start-lockup {
+  text-align: center;
+}
+
+.start-lockup span,
+.start-note {
+  color: rgba(178, 211, 222, 0.56);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+}
+
+.start-lockup h1 {
+  margin: 13px 0 8px;
+  color: rgba(240, 248, 250, 0.94);
+  font-size: clamp(25px, 5vw, 54px);
+  font-weight: 350;
+  letter-spacing: 0.16em;
+  line-height: 1.1;
+  text-indent: 0.16em;
+  text-shadow: 0 4px 36px rgba(0, 0, 0, 0.75);
+}
+
+.start-lockup p {
+  margin: 0;
+  color: rgba(218, 233, 238, 0.58);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+}
+
+.start-button {
+  display: flex;
+  width: min(220px, 64vw);
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 44px;
+  padding: 0 19px 0 22px;
+  border: 1px solid rgba(196, 224, 232, 0.32);
+  border-radius: 999px;
+  background: rgba(9, 23, 29, 0.42);
+  color: rgba(239, 248, 250, 0.94);
+  cursor: pointer;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.28em;
+  backdrop-filter: blur(14px);
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    transform 180ms ease;
+}
+
+.start-button i {
+  color: var(--cyan);
+  font-family: inherit;
+  font-size: 14px;
+  font-style: normal;
+  letter-spacing: 0;
+}
+
+.start-button:hover,
+.start-button:focus-visible {
+  outline: none;
+  border-color: rgba(141, 227, 255, 0.68);
+  background: rgba(18, 43, 52, 0.6);
+  transform: translateY(-1px);
+}
+
+.start-button:disabled {
+  cursor: wait;
+  opacity: 0.48;
+}
+
+.start-note {
+  margin: 18px 0 0;
+  font-size: 7px;
+  letter-spacing: 0.2em;
 }
 
 .hud {
@@ -432,8 +547,16 @@ button {
 }
 
 @media (max-width: 720px) {
+  .start-lockup h1 {
+    font-size: clamp(24px, 8.2vw, 42px);
+  }
+
   .hud {
-    padding: 20px 16px;
+    padding:
+      max(18px, env(safe-area-inset-top))
+      max(16px, env(safe-area-inset-right))
+      max(18px, env(safe-area-inset-bottom))
+      max(16px, env(safe-area-inset-left));
   }
 
   .live-status,
@@ -469,9 +592,28 @@ button {
     width: 38px;
     height: 38px;
   }
+
+  .restore-hud {
+    right: max(16px, env(safe-area-inset-right));
+    bottom: max(16px, env(safe-area-inset-bottom));
+  }
 }
 
 @media (max-height: 560px) {
+  .start-lockup h1 {
+    margin-block: 8px 5px;
+    font-size: clamp(23px, 7vh, 38px);
+  }
+
+  .start-button {
+    min-height: 46px;
+    margin-top: 24px;
+  }
+
+  .start-note {
+    margin-top: 10px;
+  }
+
   .subtitle,
   .keyboard-hint,
   .distance-readout {
@@ -496,6 +638,10 @@ button {
   .startup-title,
   .drive-shell[data-ready="true"] .startup-title {
     display: none;
+  }
+
+  .start-screen {
+    transition: none;
   }
 
   *,

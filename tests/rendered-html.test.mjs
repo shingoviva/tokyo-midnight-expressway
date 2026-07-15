@@ -32,6 +32,8 @@ test("server-renders the finished generative drive shell", async () => {
   assert.match(html, /<title>AFTER MIDNIGHT/);
   assert.match(html, /AFTER MIDNIGHT/);
   assert.match(html, /首都高速・無限夜行/);
+  assert.match(html, />START</);
+  assert.match(html, /TAP TO BEGIN/);
   assert.match(html, /<canvas/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|SkeletonPreview/);
 });

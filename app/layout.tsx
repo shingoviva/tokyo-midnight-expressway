@@ -1,10 +1,17 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
 
 const title = "AFTER MIDNIGHT — 首都高速・無限夜行";
 const description =
   "東京の深夜の高速道路をリアルタイム生成し続ける、無限走行映像作品。";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#010407",
+};
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
