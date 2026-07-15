@@ -11,6 +11,10 @@ import {
   roadsideSoundBarrierHeight,
 } from "./roadside-layout";
 import {
+  advanceOvertakePosition,
+  safeOvertakeTargetAgainstVehicle,
+} from "./traffic-encounters";
+import {
   collectProceduralLandmarks,
   collectProceduralLandmarkSites,
   drawProceduralLandmark,
@@ -581,6 +585,9 @@ export function createExpresswayEngine(
     role: "taxi",
     lanePosition: 1.72,
   };
+  let taxiEncounterActive = false;
+  let taxiVisualZ = 0.05;
+  let taxiLastUpdateTime = 0;
 
   function transformGroundPattern(
     pattern: CanvasPattern,
@@ -2076,7 +2083,10 @@ export function createExpresswayEngine(
 
   function collectDirectorEventObject(): void {
     const event = directorState.event;
-    if (!event) return;
+    if (!event) {
+      taxiEncounterActive = false;
+      return;
+    }
     const progress = event.progressMeters;
     const duration = event.durationMeters;
     const side = event.side;
@@ -2088,19 +2098,50 @@ export function createExpresswayEngine(
     if (event.kind === "taxi-overtake") {
       const turnDistance = [390, 470, 540][variant];
       const peakDistance = [145, 178, 205][variant];
-      z = progress < turnDistance
-        ? lerp(2.8, peakDistance, smoothstep(0, turnDistance, progress))
+      const desiredZ = progress < turnDistance
+        ? lerp(0.08, peakDistance, smoothstep(0, turnDistance, progress))
         : lerp(peakDistance, 0.05, smoothstep(turnDistance, duration, progress));
-      const taxiTargetSide = variant === 1 ? -side : side;
-      lanePosition = lerp(
-        side * 1.72,
-        taxiTargetSide * (variant === 2 ? 1.54 : 1.72),
+      const laneInset = [1.72, 1.58, 1.44][variant];
+      lanePosition = side * lerp(
+        1.72,
+        laneInset,
         smoothstep(duration * 0.31, duration * 0.64, progress),
       );
       eventVehicle.kind = "sedan";
       eventVehicle.role = "taxi";
       eventVehicle.shade = 0.08;
+      let safeTargetZ = desiredZ;
+      for (const vehicle of vehicles) {
+        safeTargetZ = safeOvertakeTargetAgainstVehicle(
+          safeTargetZ,
+          lanePosition,
+          vehicle.z,
+          safeVehicleLanePosition(
+            vehicle,
+            vehicle.lanePosition ?? vehicle.lane * 1.72,
+          ),
+          vehicle.kind,
+        );
+      }
+      if (!taxiEncounterActive) {
+        taxiEncounterActive = true;
+        taxiVisualZ = 0.05;
+        taxiLastUpdateTime = elapsedTime;
+      }
+      const taxiDeltaSeconds = clamp(
+        elapsedTime - taxiLastUpdateTime,
+        0,
+        0.05,
+      );
+      taxiLastUpdateTime = elapsedTime;
+      taxiVisualZ = advanceOvertakePosition(
+        taxiVisualZ,
+        safeTargetZ,
+        taxiDeltaSeconds,
+      );
+      z = taxiVisualZ;
     } else if (event.kind === "truck-merge") {
+      taxiEncounterActive = false;
       z = lerp(
         FAR_DISTANCE - 35,
         0.05,
@@ -2120,6 +2161,7 @@ export function createExpresswayEngine(
       eventVehicle.shade = 0.58;
       eventVehicle.signalSide = -side;
     } else {
+      taxiEncounterActive = false;
       z = lerp(
         FAR_DISTANCE - 55,
         0.05,
