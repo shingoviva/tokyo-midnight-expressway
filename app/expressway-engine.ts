@@ -827,12 +827,18 @@ export function createExpresswayEngine(
     glowContext.restore();
   }
 
-  function occludeGlowRect(x: number, y: number, width: number, height: number): void {
+  function occludeGlowRect(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    alpha = 1,
+  ): void {
     if (width <= 0 || height <= 0) return;
     const glowContext = glowLayer.context;
     glowContext.save();
     glowContext.globalCompositeOperation = "destination-out";
-    glowContext.globalAlpha = 1;
+    glowContext.globalAlpha = clamp(alpha, 0, 1);
     glowContext.fillStyle = "#000";
     glowContext.fillRect(x, y, width, height);
     glowContext.restore();
@@ -1650,7 +1656,7 @@ export function createExpresswayEngine(
   ): void {
     const localWorld = world - block * SCENE_LENGTH;
     const state = elevatedState(spec, localWorld);
-    if (state.approach < 0.1) return;
+    if (state.approach <= 0.001) return;
     const z = world - totalDistanceMeters;
     if (z < NEAR_DISTANCE || z > FAR_DISTANCE) return;
     const base = projectedAt(z, state.offset);
@@ -1663,29 +1669,65 @@ export function createExpresswayEngine(
     const pierGroundY = base.groundY + terrainDropMeters * base.scale;
     const footingHeight = (terminal ? 0.72 : 0.48) * base.scale;
     const footingWidth = columnWidth * (terminal ? 1.72 : 1.58);
+    const projectedExtent = Math.max(columnWidth, capWidth, footingWidth);
     if (
-      base.x + Math.max(columnWidth, capWidth, footingWidth) < -30 ||
-      base.x - Math.max(columnWidth, capWidth, footingWidth) > cssWidth + 30
+      base.x + projectedExtent < -30 ||
+      base.x - projectedExtent > cssWidth + 30
     ) return;
+
+    // Piers used to enter as fully opaque geometry as soon as either the far
+    // clip plane or the viewport edge admitted a single pixel. Blend those
+    // boundaries independently so the supports are already present in the
+    // haze before they become readable architectural elements.
+    const distanceVisibility = farFade(
+      z,
+      FAR_DISTANCE * 0.72,
+      FAR_DISTANCE,
+    );
+    const approachVisibility = smoothstep(0.018, 0.16, state.approach);
+    const screenOverlap = Math.min(
+      base.x + projectedExtent + 30,
+      cssWidth + 30 - (base.x - projectedExtent),
+    );
+    const edgeVisibility = smoothstep(
+      0,
+      clamp(cssWidth * 0.075, 34, 92),
+      screenOverlap,
+    );
+    const projectedVisibility = smoothstep(
+      0.24,
+      0.92,
+      Math.max(columnWidth, footingHeight),
+    );
+    const visibility =
+      distanceVisibility *
+      approachVisibility *
+      edgeVisibility *
+      projectedVisibility;
+    if (visibility <= 0.001) return;
     occludeGlowRect(
       base.x - columnWidth * 0.5,
       top.y,
       columnWidth,
       Math.max(0, pierGroundY - top.y),
+      visibility,
     );
     occludeGlowRect(
       base.x - capWidth * 0.5,
       top.y - capHeight * base.scale,
       capWidth,
       capHeight * base.scale,
+      visibility,
     );
     occludeGlowRect(
       base.x - footingWidth * 0.5,
       pierGroundY - footingHeight,
       footingWidth,
       footingHeight,
+      visibility,
     );
     context.save();
+    context.globalAlpha = visibility;
     context.fillStyle = terminal ? "#4a5559" : "#3d474b";
     context.fillRect(
       base.x - columnWidth * 0.5,
