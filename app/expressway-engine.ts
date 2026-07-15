@@ -7,6 +7,10 @@ import {
   type DriveDirectorState,
 } from "./drive-director";
 import {
+  isRoadsideSignBlockedByTallWall,
+  roadsideSoundBarrierHeight,
+} from "./roadside-layout";
+import {
   collectProceduralLandmarks,
   collectProceduralLandmarkSites,
   drawProceduralLandmark,
@@ -309,6 +313,30 @@ function locationIndex(distance: number): number {
 
 function locationLocal(distance: number): number {
   return positiveModulo(distance, LOCATION_LENGTH);
+}
+
+function soundBarrierHeightAt(
+  world: number,
+  side: -1 | 1,
+): number {
+  return roadsideSoundBarrierHeight(
+    world,
+    side,
+    LOCATION_LENGTH,
+    LOCATION_NAMES.length,
+  );
+}
+
+function roadsideSignBlockedByTallWall(
+  world: number,
+  side: -1 | 1,
+): boolean {
+  return isRoadsideSignBlockedByTallWall(
+    world,
+    side,
+    LOCATION_LENGTH,
+    LOCATION_NAMES.length,
+  );
 }
 
 function farFade(distance: number, start: number, end: number): number {
@@ -2136,6 +2164,14 @@ export function createExpresswayEngine(
       const world = index * SIGN_SPACING + 210;
       const z = world - totalDistanceMeters;
       if (z >= NEAR_DISTANCE && z < FAR_DISTANCE) {
+        const sign = roadSigns[positiveModulo(index, roadSigns.length)];
+        const roadside =
+          Boolean(sign?.family.startsWith("blue")) &&
+          positiveModulo(index, 3) === 1;
+        if (roadside) {
+          const side: -1 | 1 = index % 2 === 0 ? -1 : 1;
+          if (roadsideSignBlockedByTallWall(world, side)) continue;
+        }
         sceneObjects.push({ kind: "sign", z, index });
       }
     }
@@ -2492,7 +2528,10 @@ export function createExpresswayEngine(
     if (roadSigns.length === 0) return;
     const sign = roadSigns[positiveModulo(object.index, roadSigns.length)];
     const roadside = sign.family.startsWith("blue") && positiveModulo(object.index, 3) === 1;
-    const lateral = roadside ? (object.index % 2 === 0 ? -5.6 : 5.6) : 0;
+    const roadsideSide: -1 | 1 = object.index % 2 === 0 ? -1 : 1;
+    const world = totalDistanceMeters + object.z;
+    if (roadside && roadsideSignBlockedByTallWall(world, roadsideSide)) return;
+    const lateral = roadside ? roadsideSide * 5.6 : 0;
     const base = projectedAt(object.z, lateral);
     const boardBottomMeters = roadside ? 4.25 : 6.35;
     const boardWidth = sign.widthMeters * base.scale;
@@ -3159,8 +3198,9 @@ export function createExpresswayEngine(
         );
       }
 
-      if (soundwall && (side < 0 || locationLocal(world) < 430)) {
-        const wallHeight = side < 0 ? 3.55 : 3.05;
+      const soundWallHeight = soundBarrierHeightAt(world, side);
+      if (soundwall && soundWallHeight > 0) {
+        const wallHeight = soundWallHeight;
         drawBarrierSegment(
           far,
           near,
