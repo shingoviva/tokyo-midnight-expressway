@@ -6,6 +6,7 @@ import {
   advanceOvertakePosition,
   avoidanceLaneBlockedByVehicle,
   roadObstacleRequiresAvoidance,
+  safeRoadObstacleFollowingZ,
   safeOvertakeTargetZ,
   selectPassingLane,
   smoothPassingLateral,
@@ -128,6 +129,63 @@ test("a stopped object behind the moving vehicle does not trigger avoidance", ()
       "truck",
     ),
     false,
+  );
+});
+
+test("a general traffic car is held behind a stopped truck", () => {
+  assert.equal(
+    safeRoadObstacleFollowingZ(
+      120,
+      1.72,
+      "sedan",
+      128,
+      1.72,
+      "truck",
+    ),
+    117.35,
+  );
+  assert.equal(
+    safeRoadObstacleFollowingZ(
+      120,
+      -1.72,
+      "sedan",
+      128,
+      1.72,
+      "truck",
+    ),
+    120,
+  );
+});
+
+test("a stopped truck cannot sweep through traffic while the other lane is blocked", () => {
+  let vehicleZ = 120;
+  for (let obstacleZ = 170; obstacleZ >= 12; obstacleZ -= 0.65) {
+    vehicleZ -= 0.025;
+    vehicleZ = safeRoadObstacleFollowingZ(
+      vehicleZ,
+      1.72,
+      "minivan",
+      obstacleZ,
+      1.72,
+      "truck",
+    );
+    if (obstacleZ > vehicleZ) {
+      assert.ok(obstacleZ - vehicleZ >= 10.825 - 1e-9);
+    }
+  }
+});
+
+test("two traffic vehicles cannot remain at the same longitudinal position", () => {
+  assert.equal(
+    safeRoadObstacleFollowingZ(
+      80,
+      -1.72,
+      "sedan",
+      80,
+      -1.72,
+      "minivan",
+    ),
+    71.075,
   );
 });
 

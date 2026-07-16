@@ -12,6 +12,12 @@ const VEHICLE_WIDTH_METERS: Readonly<Record<OvertakeTrafficKind, number>> = {
   truck: 2.42,
 };
 
+const VEHICLE_LENGTH_METERS: Readonly<Record<OvertakeTrafficKind, number>> = {
+  sedan: 4.55,
+  minivan: 4.9,
+  truck: 8.35,
+};
+
 export const OVERTAKE_LANE_OFFSET_METERS = 1.72;
 
 const PASSING_MANEUVER_TRIGGER_METERS = 145;
@@ -164,6 +170,46 @@ export function roadObstacleRequiresAvoidance(
       0.42,
     )
   );
+}
+
+/**
+ * Keeps a traffic vehicle behind a stopped or merging road object while the
+ * adjacent lane is unavailable or the lane change is still in progress.
+ * Vehicle centres are separated by their physical half-lengths plus a small
+ * night-driving buffer, so the silhouettes cannot intersect in projection.
+ */
+export function safeRoadObstacleFollowingZ(
+  vehicleZ: number,
+  vehicleLateral: number,
+  vehicleKind: OvertakeTrafficKind,
+  obstacleZ: number,
+  obstacleLateral: number,
+  obstacleKind: OvertakeTrafficKind,
+): number {
+  if (
+    !Number.isFinite(vehicleZ) ||
+    !Number.isFinite(obstacleZ) ||
+    obstacleZ < vehicleZ
+  ) {
+    return vehicleZ;
+  }
+  if (
+    !overlapsVehicleCorridor(
+      vehicleLateral,
+      vehicleKind,
+      obstacleLateral,
+      obstacleKind,
+      0.24,
+    )
+  ) {
+    return vehicleZ;
+  }
+
+  const followingDistance =
+    VEHICLE_LENGTH_METERS[vehicleKind] * 0.5 +
+    VEHICLE_LENGTH_METERS[obstacleKind] * 0.5 +
+    4.2;
+  return Math.min(vehicleZ, obstacleZ - followingDistance);
 }
 
 export function avoidanceLaneBlockedByVehicle(

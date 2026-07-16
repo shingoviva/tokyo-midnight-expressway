@@ -17,6 +17,7 @@ import {
   OVERTAKE_LANE_OFFSET_METERS,
   roadObstacleRequiresAvoidance,
   safeOvertakeTargetAgainstVehicle,
+  safeRoadObstacleFollowingZ,
   selectPassingLane,
   smoothPassingLateral,
 } from "./traffic-encounters";
@@ -464,15 +465,30 @@ export function createExpresswayEngine(
   let lastTelemetryTime = -Infinity;
   let elapsedTime = 0;
   let totalDistanceMeters = sessionStartMeters;
-  let journeyDistanceMeters = 0;
-  let speedKmh = 82;
+  const qaJourneyStartMeters = import.meta.env.DEV
+    ? Math.max(
+        0,
+        Number(new URLSearchParams(window.location.search).get("qaDistance")) ||
+          0,
+      )
+    : 0;
+  let journeyDistanceMeters = qaJourneyStartMeters;
+  const qaSpeedKmh = import.meta.env.DEV
+    ? Number(new URLSearchParams(window.location.search).get("qaSpeed"))
+    : Number.NaN;
+  let speedKmh = Number.isFinite(qaSpeedKmh)
+    ? clamp(qaSpeedKmh, 30, 180)
+    : 82;
   let smoothedFps = 60;
   let frameNumber = 0;
   let soundEnabled = false;
   let audioRig: AudioRig | null = null;
   let audioUpdateTime = 0;
   let resizeObserver: ResizeObserver | null = null;
-  let directorState: DriveDirectorState = sampleDriveDirector(0, sessionSeed);
+  let directorState: DriveDirectorState = sampleDriveDirector(
+    journeyDistanceMeters,
+    sessionSeed,
+  );
 
   function signGlowColor(family: string, alpha = 0.12): string {
     if (family.startsWith("led")) return `rgba(255, 121, 31, ${alpha * 1.45})`;
@@ -612,6 +628,7 @@ export function createExpresswayEngine(
     lateral: vehicle.lane * OVERTAKE_LANE_OFFSET_METERS,
     kind: vehicle.kind,
   }));
+  const ambientTrafficOrder = [...vehicles];
 
   function transformGroundPattern(
     pattern: CanvasPattern,
@@ -3597,6 +3614,45 @@ export function createExpresswayEngine(
       : 0;
     for (const vehicle of vehicles) {
       vehicle.z -= vehicle.closingSpeed * paceFactor * deltaSeconds;
+
+      // Do not let a decorative ambient lane change steer a car into the
+      // stopped-object corridor. If one has already started, ease it back to
+      // the clear lane instead of snapping its lateral position.
+      if (
+        obstacle &&
+        vehicle.laneChangeTo !== undefined &&
+        roadObstacleRequiresAvoidance(
+          vehicle.z,
+          safeVehicleLanePosition(
+            vehicle,
+            vehicle.laneChangeTo * OVERTAKE_LANE_OFFSET_METERS,
+          ),
+          vehicle.kind,
+          obstacle.z,
+          obstacleLateral,
+          obstacle.kind,
+        )
+      ) {
+        const currentLateral = safeVehicleLanePosition(
+          vehicle,
+          vehicle.lanePosition ??
+            (vehicle.laneChangeFrom ?? vehicle.lane) *
+              OVERTAKE_LANE_OFFSET_METERS,
+        );
+        const clearLateral =
+          obstacleLateral >= 0
+            ? -OVERTAKE_LANE_OFFSET_METERS
+            : OVERTAKE_LANE_OFFSET_METERS;
+        vehicle.laneChangeFrom = undefined;
+        vehicle.laneChangeTo = undefined;
+        vehicle.laneChangeStartZ = undefined;
+        vehicle.laneChangeEndZ = undefined;
+        vehicle.avoidanceFromLateral = currentLateral;
+        vehicle.avoidanceToLateral = clearLateral;
+        vehicle.avoidanceProgress = 0;
+        vehicle.avoidanceDuration = 2.1;
+        vehicle.lanePosition = currentLateral;
+      }
       if (
         vehicle.laneChangeFrom !== undefined &&
         vehicle.laneChangeTo !== undefined &&
@@ -3711,7 +3767,56 @@ export function createExpresswayEngine(
           }
         }
       }
+
+      if (obstacle) {
+        const currentLateral = safeVehicleLanePosition(
+          vehicle,
+          vehicle.lanePosition ??
+            vehicle.lane * OVERTAKE_LANE_OFFSET_METERS,
+        );
+        vehicle.z = safeRoadObstacleFollowingZ(
+          vehicle.z,
+          currentLateral,
+          vehicle.kind,
+          obstacle.z,
+          obstacleLateral,
+          obstacle.kind,
+        );
+      }
       if (vehicle.z < -16) recycleVehicle(vehicle);
+    }
+
+    // Keep ordinary traffic ordered while vehicles queue behind an incident
+    // or cross between lanes. Without this second pass, several cars can pick
+    // the same stopping point and visually occupy one another.
+    ambientTrafficOrder.sort((a, b) => b.z - a.z || a.id - b.id);
+    for (let index = 1; index < ambientTrafficOrder.length; index += 1) {
+      const follower = ambientTrafficOrder[index];
+      const followerLateral = safeVehicleLanePosition(
+        follower,
+        follower.lanePosition ??
+          follower.lane * OVERTAKE_LANE_OFFSET_METERS,
+      );
+      for (let leaderIndex = index - 1; leaderIndex >= 0; leaderIndex -= 1) {
+        const leader = ambientTrafficOrder[leaderIndex];
+        const leaderLateral = safeVehicleLanePosition(
+          leader,
+          leader.lanePosition ??
+            leader.lane * OVERTAKE_LANE_OFFSET_METERS,
+        );
+        const safeZ = safeRoadObstacleFollowingZ(
+          follower.z,
+          followerLateral,
+          follower.kind,
+          leader.z,
+          leaderLateral,
+          leader.kind,
+        );
+        if (safeZ < follower.z) {
+          follower.z = safeZ;
+          break;
+        }
+      }
     }
   }
 
