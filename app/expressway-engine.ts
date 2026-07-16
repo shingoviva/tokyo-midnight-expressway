@@ -11,7 +11,8 @@ import {
   roadsideSoundBarrierHeight,
 } from "./roadside-layout";
 import {
-  advanceOvertakePosition,
+  advancePassingLateral,
+  advanceOvertakeMotion,
   avoidanceLaneBlockedByVehicle,
   OVERTAKE_LANE_OFFSET_METERS,
   roadObstacleRequiresAvoidance,
@@ -596,11 +597,12 @@ export function createExpresswayEngine(
   };
   let taxiEncounterActive = false;
   let taxiVisualZ = 0.05;
+  let taxiLongitudinalVelocity = 0;
   let taxiLastUpdateTime = 0;
   let taxiLanePosition = OVERTAKE_LANE_OFFSET_METERS;
   let taxiTargetLanePosition = OVERTAKE_LANE_OFFSET_METERS;
-  let taxiLaneChangeFrom = OVERTAKE_LANE_OFFSET_METERS;
-  let taxiLaneChangeStartProgress = 0;
+  let taxiLaneVelocity = 0;
+  let taxiLastLaneDecisionProgress = Number.NEGATIVE_INFINITY;
   const taxiTrafficSamples: Array<{
     z: number;
     lateral: number;
@@ -2181,14 +2183,20 @@ export function createExpresswayEngine(
       if (!taxiEncounterActive) {
         taxiEncounterActive = true;
         taxiVisualZ = 0.05;
+        taxiLongitudinalVelocity = 0;
         taxiLastUpdateTime = elapsedTime;
         taxiLanePosition = side * OVERTAKE_LANE_OFFSET_METERS;
         taxiTargetLanePosition = taxiLanePosition;
-        taxiLaneChangeFrom = taxiLanePosition;
-        // Mark the taxi as settled in its initial lane so the first passing
-        // decision can happen while it is still emerging from behind camera.
-        taxiLaneChangeStartProgress = progress - [72, 80, 88][variant];
+        taxiLaneVelocity = 0;
+        taxiLastLaneDecisionProgress = Number.NEGATIVE_INFINITY;
       }
+
+      const taxiDeltaSeconds = clamp(
+        elapsedTime - taxiLastUpdateTime,
+        0,
+        0.05,
+      );
+      taxiLastUpdateTime = elapsedTime;
 
       for (let index = 0; index < vehicles.length; index += 1) {
         const vehicle = vehicles[index];
@@ -2202,32 +2210,37 @@ export function createExpresswayEngine(
         sample.kind = vehicle.kind;
       }
 
-      const laneChangeDistance = [72, 80, 88][variant];
-      let laneChangeProgress = clamp(
-        (progress - taxiLaneChangeStartProgress) / laneChangeDistance,
-        0,
-        1,
-      );
-      taxiLanePosition = smoothPassingLateral(
-        taxiLaneChangeFrom,
-        taxiTargetLanePosition,
-        laneChangeProgress,
-      );
-      if (laneChangeProgress >= 1) {
+      const laneSettled =
+        Math.abs(taxiTargetLanePosition - taxiLanePosition) < 0.035 &&
+        Math.abs(taxiLaneVelocity) < 0.04;
+      const decisionSpacing = [150, 170, 190][variant];
+      if (
+        laneSettled &&
+        progress - taxiLastLaneDecisionProgress >= decisionSpacing
+      ) {
         const selectedLane = selectPassingLane(
           taxiVisualZ,
           taxiTargetLanePosition,
           taxiTrafficSamples,
         );
         if (selectedLane !== taxiTargetLanePosition) {
-          taxiLaneChangeFrom = taxiLanePosition;
           taxiTargetLanePosition = selectedLane;
-          taxiLaneChangeStartProgress = progress;
-          laneChangeProgress = 0;
+          taxiLastLaneDecisionProgress = progress;
         }
       }
+      const lateralState = advancePassingLateral(
+        taxiLanePosition,
+        taxiLaneVelocity,
+        taxiTargetLanePosition,
+        taxiDeltaSeconds,
+      );
+      taxiLanePosition = lateralState.lateral;
+      taxiLaneVelocity = lateralState.velocity;
       lanePosition = taxiLanePosition;
-      if (laneChangeProgress < 1) {
+      if (
+        Math.abs(taxiTargetLanePosition - taxiLanePosition) > 0.08 ||
+        Math.abs(taxiLaneVelocity) > 0.08
+      ) {
         eventVehicle.signalSide = taxiTargetLanePosition >= 0 ? 1 : -1;
       }
 
@@ -2246,17 +2259,14 @@ export function createExpresswayEngine(
           sample.kind,
         );
       }
-      const taxiDeltaSeconds = clamp(
-        elapsedTime - taxiLastUpdateTime,
-        0,
-        0.05,
-      );
-      taxiLastUpdateTime = elapsedTime;
-      taxiVisualZ = advanceOvertakePosition(
+      const longitudinalState = advanceOvertakeMotion(
         taxiVisualZ,
+        taxiLongitudinalVelocity,
         safeTargetZ,
         taxiDeltaSeconds,
       );
+      taxiVisualZ = longitudinalState.z;
+      taxiLongitudinalVelocity = longitudinalState.velocity;
       z = taxiVisualZ;
     } else {
       taxiEncounterActive = false;
@@ -2883,8 +2893,8 @@ export function createExpresswayEngine(
         drawGlowDot(
           tailX,
           base.groundY - 0.6,
-          3.2,
-          `rgba(255, 35, 24, ${0.42 * visibility})`,
+          2.4,
+          `rgba(255, 35, 24, ${0.34 * visibility})`,
         );
       }
       context.restore();
@@ -3011,14 +3021,14 @@ export function createExpresswayEngine(
     // Keep the lamps proportional to the body in the near field. The previous
     // low pixel caps made them appear to shrink as the camera overtook a car.
     const tailWidth = clamp(
-      width * (vehicle.kind === "truck" ? 0.14 : 0.165),
+      width * (vehicle.kind === "truck" ? 0.13 : 0.145),
       1,
-      32,
+      64,
     );
     const tailHeight = clamp(
-      height * (vehicle.kind === "truck" ? 0.085 : 0.11),
+      height * (vehicle.kind === "truck" ? 0.08 : 0.1),
       1,
-      18,
+      32,
     );
     for (const side of [-1, 1]) {
       const tailX = base.x + side * tailOffset;
@@ -3027,8 +3037,12 @@ export function createExpresswayEngine(
       drawGlowDot(
         tailX,
         tailY + tailHeight * 0.5,
-        clamp(base.scale * 1.25, 3, 26),
-        `rgba(255, 34, 22, ${0.5 * visibility})`,
+        clamp(
+          width * (vehicle.kind === "truck" ? 0.23 : 0.28),
+          2.2,
+          56,
+        ),
+        `rgba(255, 34, 22, ${0.36 * visibility})`,
       );
     }
 
@@ -3342,7 +3356,14 @@ export function createExpresswayEngine(
       const chevronVisibility =
         farFade(near.z, 860, FAR_DISTANCE) *
         smoothstep(0.35, 1.5, near.scale * height);
-      if (chevrons && chevronVisibility > 0.002) {
+      const screenTurn = far.center - near.center;
+      const outsideSide: -1 | 1 = screenTurn < 0 ? 1 : -1;
+      if (
+        chevrons &&
+        Math.abs(screenTurn) > 0.015 &&
+        side === outsideSide &&
+        chevronVisibility > 0.002
+      ) {
         drawChevronPanels(
           far,
           near,

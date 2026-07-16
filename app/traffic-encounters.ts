@@ -14,9 +14,9 @@ const VEHICLE_WIDTH_METERS: Readonly<Record<OvertakeTrafficKind, number>> = {
 
 export const OVERTAKE_LANE_OFFSET_METERS = 1.72;
 
-const PASSING_MANEUVER_TRIGGER_METERS = 92;
-const PASSING_LANE_REAR_CLEARANCE_METERS = 18;
-const PASSING_LANE_FORWARD_CLEARANCE_METERS = 48;
+const PASSING_MANEUVER_TRIGGER_METERS = 145;
+const PASSING_LANE_REAR_CLEARANCE_METERS = 24;
+const PASSING_LANE_FORWARD_CLEARANCE_METERS = 72;
 const ROAD_OBSTACLE_TRIGGER_METERS = 145;
 const AVOIDANCE_LANE_REAR_CLEARANCE_METERS = 24;
 const AVOIDANCE_LANE_FORWARD_CLEARANCE_METERS = 58;
@@ -199,8 +199,39 @@ export function smoothPassingLateral(
 ): number {
   const normalizedProgress = Math.max(0, Math.min(1, progress));
   const easedProgress =
-    normalizedProgress * normalizedProgress * (3 - 2 * normalizedProgress);
+    normalizedProgress *
+    normalizedProgress *
+    normalizedProgress *
+    (normalizedProgress * (normalizedProgress * 6 - 15) + 10);
   return fromLateral + (toLateral - fromLateral) * easedProgress;
+}
+
+export function advancePassingLateral(
+  currentLateral: number,
+  currentVelocity: number,
+  targetLateral: number,
+  deltaSeconds: number,
+): Readonly<{ lateral: number; velocity: number }> {
+  const safeDeltaSeconds = Math.max(0, Math.min(0.05, deltaSeconds));
+  const remaining = targetLateral - currentLateral;
+  if (Math.abs(remaining) < 0.012 && Math.abs(currentVelocity) < 0.025) {
+    return { lateral: targetLateral, velocity: 0 };
+  }
+
+  const desiredAcceleration = remaining * 0.95 - currentVelocity * 1.55;
+  const acceleration = Math.max(-0.92, Math.min(0.92, desiredAcceleration));
+  const nextVelocity = Math.max(
+    -1.02,
+    Math.min(1.02, currentVelocity + acceleration * safeDeltaSeconds),
+  );
+  const nextLateral = currentLateral + nextVelocity * safeDeltaSeconds;
+  if (
+    (remaining > 0 && nextLateral >= targetLateral) ||
+    (remaining < 0 && nextLateral <= targetLateral)
+  ) {
+    return { lateral: targetLateral, velocity: 0 };
+  }
+  return { lateral: nextLateral, velocity: nextVelocity };
 }
 
 export function advanceOvertakePosition(
@@ -216,4 +247,34 @@ export function advanceOvertakePosition(
   const difference = targetZ - currentZ;
   if (Math.abs(difference) <= maximumStep) return targetZ;
   return currentZ + Math.sign(difference) * maximumStep;
+}
+
+export function advanceOvertakeMotion(
+  currentZ: number,
+  currentVelocity: number,
+  targetZ: number,
+  deltaSeconds: number,
+): Readonly<{ z: number; velocity: number }> {
+  const safeDeltaSeconds = Math.max(0, Math.min(0.05, deltaSeconds));
+  const remaining = targetZ - currentZ;
+  if (Math.abs(remaining) < 0.015 && Math.abs(currentVelocity) < 0.04) {
+    return { z: targetZ, velocity: 0 };
+  }
+
+  const desiredVelocity = Math.max(-3.2, Math.min(9.2, remaining * 0.38));
+  const accelerationLimit = desiredVelocity >= currentVelocity ? 2.8 : 3.5;
+  const velocityDifference = desiredVelocity - currentVelocity;
+  const maximumVelocityStep = accelerationLimit * safeDeltaSeconds;
+  const nextVelocity = currentVelocity + Math.max(
+    -maximumVelocityStep,
+    Math.min(maximumVelocityStep, velocityDifference),
+  );
+  const nextZ = currentZ + nextVelocity * safeDeltaSeconds;
+  if (
+    (remaining > 0 && nextZ >= targetZ) ||
+    (remaining < 0 && nextZ <= targetZ)
+  ) {
+    return { z: targetZ, velocity: 0 };
+  }
+  return { z: Math.max(0.05, nextZ), velocity: nextVelocity };
 }

@@ -33,9 +33,11 @@ button {
 }
 
 .drive-shell {
-  position: relative;
-  width: 100%;
-  height: 100dvh;
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+  min-height: 100dvh;
   isolation: isolate;
   overflow: hidden;
   background:
@@ -43,7 +45,7 @@ button {
 }
 
 .drive-canvas {
-  position: absolute;
+  position: fixed;
   inset: 0;
   display: block;
   width: 100%;
@@ -53,7 +55,7 @@ button {
 }
 
 .cinema-frame {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 2;
   pointer-events: none;
@@ -63,7 +65,7 @@ button {
 }
 
 .optical-noise {
-  position: absolute;
+  position: fixed;
   inset: -40%;
   z-index: 3;
   pointer-events: none;
@@ -89,7 +91,7 @@ button {
 }
 
 .start-screen {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 12;
   display: flex;
@@ -203,7 +205,7 @@ button {
 }
 
 .hud {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 5;
   display: flex;
