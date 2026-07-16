@@ -25,9 +25,11 @@ import {
   collectProceduralLandmarks,
   collectProceduralLandmarkSites,
   drawProceduralLandmark,
+  rainbowBridgeRenderDepth,
   type ProceduralLandmarkInstance,
   type ProceduralLandmarkOptions,
 } from "./procedural-landmarks";
+import { transverseOverpassPierLaterals } from "./overpass-layout";
 
 export type Telemetry = {
   speedKmh: number;
@@ -1396,7 +1398,9 @@ export function createExpresswayEngine(
     for (const landmark of landmarks) {
       cityLayerItems.push({
         kind: "landmark",
-        z: landmark.z,
+        z: landmark.kind === "rainbow-bridge"
+          ? rainbowBridgeRenderDepth(landmark.z)
+          : landmark.z,
         landmark,
       });
     }
@@ -2570,6 +2574,10 @@ export function createExpresswayEngine(
     const pierTopY = deckY + thickness * 0.68;
     const pierBottomY = overpassGroundY;
     const pierHeight = Math.max(0, pierBottomY - pierTopY);
+    const pierLaterals = transverseOverpassPierLaterals(
+      object.level,
+      quality,
+    );
     const pierVisibility = (pierX: number): number => {
       const horizontalOverlap = Math.min(
         pierX + pierWidth * 0.5 + 24,
@@ -2587,7 +2595,7 @@ export function createExpresswayEngine(
       );
     };
     const deckVisible = deckY + thickness > -24 && deckY < cssHeight + 24;
-    const pierVisible = [-13, 13].some((lateral) => {
+    const pierVisible = pierLaterals.some((lateral) => {
       const pierX = base.x + lateral * base.scale;
       return (
         pierX + pierWidth * 0.5 > -24 &&
@@ -2606,7 +2614,7 @@ export function createExpresswayEngine(
       thickness,
       visibility,
     );
-    for (const lateral of [-13, 13]) {
+    for (const lateral of pierLaterals) {
       const pierX = base.x + lateral * base.scale;
       const supportVisibility = pierVisibility(pierX);
       if (supportVisibility <= 0.001) continue;
@@ -2645,7 +2653,7 @@ export function createExpresswayEngine(
     }
 
     context.fillStyle = "rgba(86, 99, 105, 0.86)";
-    for (const lateral of [-13, 13]) {
+    for (const lateral of pierLaterals) {
       const pierX = base.x + lateral * base.scale;
       const supportVisibility = pierVisibility(pierX);
       if (supportVisibility <= 0.001) continue;

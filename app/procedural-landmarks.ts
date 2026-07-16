@@ -83,6 +83,16 @@ const RAINBOW_BRIDGE_FAR_APPROACH = 744;
 const RAINBOW_BRIDGE_ENTRY_RUNOUT = -360;
 const RAINBOW_BRIDGE_EXIT_RUNOUT = 1_040;
 
+export function rainbowBridgeHasVisibleRunout(anchorZ: number): boolean {
+  return anchorZ + RAINBOW_BRIDGE_EXIT_RUNOUT > LANDMARK_NEAR_CLIP;
+}
+
+export function rainbowBridgeRenderDepth(anchorZ: number): number {
+  return rainbowBridgeHasVisibleRunout(anchorZ)
+    ? Math.max(LANDMARK_NEAR_CLIP, anchorZ)
+    : anchorZ;
+}
+
 const LANDMARK_SPECS: readonly LandmarkSpec[] = [
   {
     kind: "tokyo-metropolitan-government",
@@ -924,7 +934,10 @@ function drawRainbowBridge(
 ): void {
   const totalHeight = 58;
   const deckHalfWidth = 8.8;
-  if (!isPotentiallyVisible(options, instance, totalHeight, 14)) return;
+  // Generic landmark culling probes the anchor at the near tower. Once that
+  // tower passed the camera it used to discard the still-visible far tower and
+  // exit deck. Keep the bridge alive until the complete far runout has passed.
+  if (!rainbowBridgeHasVisibleRunout(instance.z)) return;
 
   const scale = projectedScale(options, instance);
   const heightPixels = projectedHeight(options, instance, totalHeight);
