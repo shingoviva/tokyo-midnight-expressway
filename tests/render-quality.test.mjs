@@ -24,6 +24,7 @@ test("mobile rendering limits both pixels and expensive effects", () => {
   assert.equal(profile.buildingWindowRows, 7);
   assert.equal(profile.buildingWindowColumns, 4);
   assert.equal(profile.buildingWindowLitBias, -0.045);
+  assert.equal(profile.buildingFacadeLightLift, 4);
   assert.equal(profile.vehicleCount, 8);
   assert.equal(profile.noiseEnabled, false);
   assert.equal(profile.minimumFrameIntervalMs, 1000 / 60);
@@ -50,6 +51,7 @@ test("desktop quality budgets remain unchanged", () => {
   assert.equal(RENDER_QUALITY_PROFILES.HIGH.pixelBudget, 5_200_000);
   assert.equal(RENDER_QUALITY_PROFILES.HIGH.buildingSpacing, 35);
   assert.equal(RENDER_QUALITY_PROFILES.HIGH.buildingWindowLitBias, 0);
+  assert.equal(RENDER_QUALITY_PROFILES.HIGH.buildingFacadeLightLift, 0);
   assert.equal(RENDER_QUALITY_PROFILES.HIGH.minimumFrameIntervalMs, 0);
   assert.equal(RENDER_QUALITY_PROFILES.HIGH.bloomEnabled, true);
   assert.equal(RENDER_QUALITY_PROFILES.BALANCED.ratioCap, 1.45);

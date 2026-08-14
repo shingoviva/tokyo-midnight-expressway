@@ -12,6 +12,7 @@ export type RenderQualityProfile = Readonly<{
   buildingWindowRows: number;
   buildingWindowColumns: number;
   buildingWindowLitBias: number;
+  buildingFacadeLightLift: number;
   vehicleCount: number;
   noiseEnabled: boolean;
   minimumFrameIntervalMs: number;
@@ -30,6 +31,7 @@ export const RENDER_QUALITY_PROFILES: Readonly<
     buildingWindowRows: 30,
     buildingWindowColumns: 9,
     buildingWindowLitBias: 0,
+    buildingFacadeLightLift: 0,
     vehicleCount: 20,
     noiseEnabled: true,
     minimumFrameIntervalMs: 0,
@@ -44,6 +46,7 @@ export const RENDER_QUALITY_PROFILES: Readonly<
     buildingWindowRows: 30,
     buildingWindowColumns: 9,
     buildingWindowLitBias: 0,
+    buildingFacadeLightLift: 0,
     vehicleCount: 20,
     noiseEnabled: true,
     minimumFrameIntervalMs: 0,
@@ -62,6 +65,7 @@ export const RENDER_QUALITY_PROFILES: Readonly<
     buildingWindowRows: 7,
     buildingWindowColumns: 4,
     buildingWindowLitBias: -0.045,
+    buildingFacadeLightLift: 4,
     vehicleCount: 8,
     noiseEnabled: false,
     // Cap ProMotion displays at 60 rendered frames without penalising normal

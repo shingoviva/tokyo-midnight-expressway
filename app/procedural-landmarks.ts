@@ -302,6 +302,18 @@ export function proceduralLandmarkTerrainDropMeters(
   return baseDrop * (0.82 + seeded(block, 701 + baseDrop * 113) * 0.36);
 }
 
+export function portraitSafeLandmarkLateral(
+  kind: ProceduralLandmarkKind,
+  lateral: number,
+  portraitMobile: boolean,
+): number {
+  if (!portraitMobile || kind === "rainbow-bridge") return lateral;
+  // Shift the complete landmark anchor, not its individual vertices. This
+  // preserves real-world proportions while keeping large architecture inside
+  // the narrow portrait frame.
+  return lateral * 0.7;
+}
+
 function landmarkOccursInBlock(spec: LandmarkSpec, block: number): boolean {
   return (
     positiveModulo(block, spec.recurrenceEvery) === spec.recurrenceOffset

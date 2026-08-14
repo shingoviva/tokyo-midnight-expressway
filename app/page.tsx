@@ -23,6 +23,8 @@ export default function Home() {
   const [paused, setPaused] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [hudVisible, setHudVisible] = useState(true);
+  const [hudCompact, setHudCompact] = useState(false);
+  const [hudActivity, setHudActivity] = useState(0);
   const [enginePrepared, setEnginePrepared] = useState(false);
   const [experienceStarted, setExperienceStarted] = useState(false);
   const [ready, setReady] = useState(false);
@@ -64,8 +66,19 @@ export default function Home() {
     const engine = engineRef.current;
     if (!engine) return;
     engine.start();
+    setHudCompact(false);
     setExperienceStarted(true);
   }, []);
+
+  useEffect(() => {
+    if (!experienceStarted || !hudVisible || hudCompact) return;
+    const compactOnThisDevice = window.matchMedia(
+      "(max-width: 720px) and (pointer: coarse)",
+    ).matches;
+    if (!compactOnThisDevice) return;
+    const timer = window.setTimeout(() => setHudCompact(true), 6000);
+    return () => window.clearTimeout(timer);
+  }, [experienceStarted, hudActivity, hudCompact, hudVisible]);
 
   const togglePause = useCallback(() => {
     const engine = engineRef.current;
@@ -176,7 +189,9 @@ export default function Home() {
       </section>
 
       {experienceStarted && (
-        <section className={`hud ${hudVisible ? "is-visible" : "is-hidden"}`}>
+        <section
+          className={`hud ${hudVisible ? "is-visible" : "is-hidden"} ${hudCompact ? "is-compact" : ""}`}
+        >
         <header className="hud-header">
           <div className="title-lockup">
             <div className="route-disc" aria-hidden="true">
@@ -210,7 +225,18 @@ export default function Home() {
             </div>
           </div>
 
-          <nav className="drive-controls" aria-label="映像作品の操作">
+          <nav
+            className="drive-controls"
+            aria-label={hudCompact ? "タップして操作を表示" : "映像作品の操作"}
+            onClickCapture={(event) => {
+              if (hudCompact) {
+                event.preventDefault();
+                event.stopPropagation();
+              }
+              setHudCompact(false);
+              setHudActivity((activity) => activity + 1);
+            }}
+          >
             <button
               type="button"
               onClick={() => adjustSpeed(-5)}
@@ -274,7 +300,11 @@ export default function Home() {
         <button
           type="button"
           className="restore-hud"
-          onClick={() => setHudVisible(true)}
+          onClick={() => {
+            setHudVisible(true);
+            setHudCompact(false);
+            setHudActivity((activity) => activity + 1);
+          }}
           aria-label="インターフェースを表示"
         >
           HUD

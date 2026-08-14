@@ -417,6 +417,11 @@ button {
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
   backdrop-filter: blur(16px) saturate(120%);
   pointer-events: auto;
+  transition:
+    width 360ms ease,
+    height 360ms ease,
+    opacity 260ms ease,
+    background 260ms ease;
 }
 
 .drive-controls button,
@@ -608,7 +613,33 @@ button {
   }
 
   .drive-controls {
+    width: 318px;
+    max-width: 100%;
     align-self: flex-end;
+    overflow: hidden;
+  }
+
+  .hud.is-compact .drive-controls {
+    width: 58px;
+    height: 38px;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+    opacity: 0.5;
+    background: rgba(3, 10, 14, 0.34);
+  }
+
+  .hud.is-compact .drive-controls > * {
+    display: none;
+  }
+
+  .hud.is-compact .drive-controls::after {
+    content: "•••";
+    color: rgba(215, 235, 241, 0.7);
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 9px;
+    letter-spacing: 0.16em;
+    transform: translateX(0.08em);
   }
 
   .title-lockup h1 {

@@ -4,7 +4,10 @@ import {
   DRIVE_DIRECTOR_CYCLE_METERS,
   sampleDriveDirector,
 } from "../app/drive-director.ts";
-import { proceduralLandmarkTerrainDropMeters } from "../app/procedural-landmarks.ts";
+import {
+  portraitSafeLandmarkLateral,
+  proceduralLandmarkTerrainDropMeters,
+} from "../app/procedural-landmarks.ts";
 
 test("drive director moves through quiet, rising, peak, and afterglow", () => {
   const quiet = sampleDriveDirector(0, 42);
@@ -60,4 +63,11 @@ test("selected landmarks sit below the expressway ground plane", () => {
     proceduralLandmarkTerrainDropMeters("shibuya-scramble-square", 4),
     0,
   );
+});
+
+test("portrait framing shifts landmark anchors without moving the bridge", () => {
+  assert.equal(portraitSafeLandmarkLateral("big-sight", 120, true), 84);
+  assert.equal(portraitSafeLandmarkLateral("tokyo-tower", -100, true), -70);
+  assert.equal(portraitSafeLandmarkLateral("rainbow-bridge", 18, true), 18);
+  assert.equal(portraitSafeLandmarkLateral("big-sight", 120, false), 120);
 });

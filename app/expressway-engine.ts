@@ -25,6 +25,7 @@ import {
   collectProceduralLandmarks,
   collectProceduralLandmarkSites,
   drawProceduralLandmark,
+  portraitSafeLandmarkLateral,
   rainbowBridgeRenderDepth,
   type ProceduralLandmarkInstance,
   type ProceduralLandmarkOptions,
@@ -1239,7 +1240,10 @@ export function createExpresswayEngine(
 
     const left = base.x - width * 0.5;
     const top = base.groundY - height;
-    const bodyLightness = Math.round(5 + seeded(index, 181) * 8);
+    const qualityProfile = RENDER_QUALITY_PROFILES[quality];
+    const bodyLightness = Math.round(
+      5 + seeded(index, 181) * 8 + qualityProfile.buildingFacadeLightLift,
+    );
     const skylineBlend = smoothstep(1850, CITY_FAR_DISTANCE, z);
     const skylineColor = (red: number, green: number, blue: number): string => {
       const skylineRed = Math.round(lerp(red, 5, skylineBlend));
@@ -1305,9 +1309,10 @@ export function createExpresswayEngine(
       context.restore();
     }
 
+    const sideLift = qualityProfile.buildingFacadeLightLift;
     context.fillStyle = side > 0
-      ? skylineColor(5, 9, 13)
-      : skylineColor(13, 18, 22);
+      ? skylineColor(5 + sideLift, 9 + sideLift, 13 + sideLift)
+      : skylineColor(13 + sideLift, 18 + sideLift, 22 + sideLift);
     fillPolygon(context, sideFace);
 
     const roofAccent = seeded(index, 211);
@@ -1328,13 +1333,24 @@ export function createExpresswayEngine(
     if (height > 3 && width > 2) {
       const realRows = Math.max(3, Math.floor(heightMeters / 3.35));
       const realColumns = Math.max(2, Math.floor(widthMeters / 3.1));
-      const qualityProfile = RENDER_QUALITY_PROFILES[quality];
       const maximumRows = qualityProfile.buildingWindowRows;
       const rowStep = Math.max(1, Math.ceil(realRows / maximumRows));
       const maximumColumns = qualityProfile.buildingWindowColumns;
       const columnStep = Math.max(1, Math.ceil(realColumns / maximumColumns));
-      const windowWidth = clamp(base.scale * 2.05, 0.65, width * 0.18);
-      const windowHeight = clamp(base.scale * 1.08, 0.55, 4.2);
+      const minimumWindowWidth = quality === "MOBILE"
+        ? 0.95 / Math.max(0.7, pixelRatio)
+        : 0.65;
+      const minimumWindowHeight = quality === "MOBILE"
+        ? 0.78 / Math.max(0.7, pixelRatio)
+        : 0.55;
+      const windowWidth = Math.min(
+        width * 0.18,
+        Math.max(base.scale * 2.05, minimumWindowWidth),
+      );
+      const windowHeight = Math.min(
+        4.2,
+        Math.max(base.scale * 1.08, minimumWindowHeight),
+      );
       const windowVisibility =
         farFade(z, 1420, 2140) *
         lerp(0.56, 1.08, directorState.intensity);
@@ -1505,14 +1521,25 @@ export function createExpresswayEngine(
   function collectCityLayerItems(): void {
     const landmarkOptions = createLandmarkOptions();
     const landmarks = collectProceduralLandmarks(landmarkOptions);
+    const portraitMobile = quality === "MOBILE" && cssHeight > cssWidth * 1.18;
     cityLayerItems.length = 0;
     for (const landmark of landmarks) {
+      const displayedLandmark = portraitMobile
+        ? {
+            ...landmark,
+            lateral: portraitSafeLandmarkLateral(
+              landmark.kind,
+              landmark.lateral,
+              true,
+            ),
+          }
+        : landmark;
       cityLayerItems.push({
         kind: "landmark",
-        z: landmark.kind === "rainbow-bridge"
-          ? rainbowBridgeRenderDepth(landmark.z)
-          : landmark.z,
-        landmark,
+        z: displayedLandmark.kind === "rainbow-bridge"
+          ? rainbowBridgeRenderDepth(displayedLandmark.z)
+          : displayedLandmark.z,
+        landmark: displayedLandmark,
       });
     }
     // Site reservations are anchored in world space, so buildings never pop
