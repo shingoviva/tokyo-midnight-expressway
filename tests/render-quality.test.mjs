@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  adaptiveMobilePixelRatio,
   RENDER_QUALITY_PROFILES,
   renderPixelRatio,
   selectRenderQuality,
@@ -14,13 +15,21 @@ test("coarse-pointer phones always use the mobile renderer", () => {
 
 test("mobile rendering limits both pixels and expensive effects", () => {
   const profile = RENDER_QUALITY_PROFILES.MOBILE;
-  assert.equal(renderPixelRatio(390, 844, 3, "MOBILE"), 0.7);
-  assert.equal(renderPixelRatio(1_179, 2_556, 3, "MOBILE"), 0.62);
+  assert.equal(renderPixelRatio(390, 844, 3, "MOBILE"), 0.9);
+  assert.equal(renderPixelRatio(1_179, 2_556, 3, "MOBILE"), 0.7);
   assert.ok(profile.glowRatio < RENDER_QUALITY_PROFILES.HIGH.glowRatio);
   assert.ok(profile.vehicleCount < RENDER_QUALITY_PROFILES.HIGH.vehicleCount);
   assert.equal(profile.noiseEnabled, false);
-  assert.equal(profile.minimumFrameIntervalMs, 0);
+  assert.equal(profile.minimumFrameIntervalMs, 1000 / 60);
   assert.equal(profile.bloomEnabled, false);
+});
+
+test("mobile resolution responds slowly to headroom and quickly to pressure", () => {
+  assert.equal(adaptiveMobilePixelRatio(0.9, 0.9, 48, 12, 0), 0.85);
+  assert.equal(adaptiveMobilePixelRatio(0.7, 0.9, 48, 16, 0), 0.7);
+  assert.equal(adaptiveMobilePixelRatio(0.75, 0.9, 60, 8, 2), 0.75);
+  assert.equal(adaptiveMobilePixelRatio(0.75, 0.9, 60, 8, 3), 0.8);
+  assert.equal(adaptiveMobilePixelRatio(0.9, 0.9, 60, 8, 4), 0.9);
 });
 
 test("desktop quality budgets remain unchanged", () => {

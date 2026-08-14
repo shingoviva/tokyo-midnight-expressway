@@ -1,5 +1,8 @@
 export type RenderQuality = "HIGH" | "BALANCED" | "MOBILE";
 
+export const MOBILE_MIN_PIXEL_RATIO = 0.7;
+const MOBILE_RATIO_STEP = 0.05;
+
 export type RenderQualityProfile = Readonly<{
   ratioCap: number;
   pixelBudget: number;
@@ -48,7 +51,7 @@ export const RENDER_QUALITY_PROFILES: Readonly<
     // that density plus a blurred glow buffer is needlessly expensive for a
     // moving night scene. A deliberately soft backing surface is preferable
     // to uneven frame delivery on thermally constrained mobile Safari.
-    ratioCap: 0.7,
+    ratioCap: 0.9,
     pixelBudget: 420_000,
     glowRatio: 0.16,
     cityFarDistance: 1_650,
@@ -57,7 +60,9 @@ export const RENDER_QUALITY_PROFILES: Readonly<
     buildingWindowColumns: 2,
     vehicleCount: 6,
     noiseEnabled: false,
-    minimumFrameIntervalMs: 0,
+    // Cap ProMotion displays at 60 rendered frames without penalising normal
+    // 60 Hz iPhones. This leaves more thermal headroom for sharper pixels.
+    minimumFrameIntervalMs: 1000 / 60,
     bloomEnabled: false,
   },
 } as const;
@@ -82,7 +87,37 @@ export function renderPixelRatio(
     profile.pixelBudget / Math.max(1, width * height),
   );
   return Math.max(
-    quality === "MOBILE" ? 0.62 : 0.75,
+    quality === "MOBILE" ? MOBILE_MIN_PIXEL_RATIO : 0.75,
     Math.min(devicePixelRatio || 1, profile.ratioCap, budgetRatio),
   );
+}
+
+export function adaptiveMobilePixelRatio(
+  currentRatio: number,
+  ceilingRatio: number,
+  smoothedFps: number,
+  renderCostMs: number,
+  consecutiveHeadroomSamples: number,
+): number {
+  const ceiling = Math.max(
+    MOBILE_MIN_PIXEL_RATIO,
+    Math.min(RENDER_QUALITY_PROFILES.MOBILE.ratioCap, ceilingRatio),
+  );
+  const current = Math.max(
+    MOBILE_MIN_PIXEL_RATIO,
+    Math.min(ceiling, currentRatio),
+  );
+  const underPressure = smoothedFps < 52 || renderCostMs > 14;
+  const hasSustainedHeadroom =
+    consecutiveHeadroomSamples >= 3 &&
+    smoothedFps >= 57 &&
+    renderCostMs <= 9.5;
+  const next = underPressure
+    ? current - MOBILE_RATIO_STEP
+    : hasSustainedHeadroom
+      ? current + MOBILE_RATIO_STEP
+      : current;
+  return Math.round(
+    Math.max(MOBILE_MIN_PIXEL_RATIO, Math.min(ceiling, next)) * 100,
+  ) / 100;
 }

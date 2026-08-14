@@ -31,6 +31,8 @@ import {
 } from "./procedural-landmarks";
 import { transverseOverpassPierLaterals } from "./overpass-layout";
 import {
+  adaptiveMobilePixelRatio,
+  MOBILE_MIN_PIXEL_RATIO,
   RENDER_QUALITY_PROFILES,
   renderPixelRatio,
   selectRenderQuality,
@@ -470,6 +472,10 @@ export function createExpresswayEngine(
   let animationFrame = 0;
   let lastFrameTime = 0;
   let lastTelemetryTime = -Infinity;
+  let adaptiveRatioCeiling = 1;
+  let averageRenderCostMs = 0;
+  let mobileHeadroomSamples = 0;
+  let nextAdaptiveResolutionTime = 0;
   let elapsedTime = 0;
   let totalDistanceMeters = sessionStartMeters;
   const qaJourneyStartMeters = import.meta.env.DEV
@@ -843,27 +849,8 @@ export function createExpresswayEngine(
     noiseContext.putImageData(image, 0, 0);
   }
 
-  function resize(): void {
-    if (destroyed) return;
-    const bounds = canvas.getBoundingClientRect();
-    const nextWidth = Math.max(1, Math.round(bounds.width || window.innerWidth));
-    const nextHeight = Math.max(1, Math.round(bounds.height || window.innerHeight));
-    const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
-    quality = selectRenderQuality(nextWidth, coarsePointer);
-    const profile = RENDER_QUALITY_PROFILES[quality];
-    const nextRatio = renderPixelRatio(
-      nextWidth,
-      nextHeight,
-      window.devicePixelRatio || 1,
-      quality,
-    );
-
-    cssWidth = nextWidth;
-    cssHeight = nextHeight;
+  function applyBackingResolution(nextRatio: number): void {
     pixelRatio = nextRatio;
-    glowRatio = profile.glowRatio;
-    focalLength = cssHeight * (cssWidth < cssHeight ? 0.72 : 0.8);
-    horizon = cssHeight * (cssWidth < cssHeight ? 0.46 : 0.62);
     lightTrailPositions.clear();
 
     const backingWidth = Math.max(1, Math.round(cssWidth * pixelRatio));
@@ -880,6 +867,40 @@ export function createExpresswayEngine(
     );
     configureContextTransforms();
     rebuildStaticGradients();
+  }
+
+  function resize(): void {
+    if (destroyed) return;
+    const bounds = canvas.getBoundingClientRect();
+    const nextWidth = Math.max(1, Math.round(bounds.width || window.innerWidth));
+    const nextHeight = Math.max(1, Math.round(bounds.height || window.innerHeight));
+    const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+    const previousQuality = quality;
+    quality = selectRenderQuality(nextWidth, coarsePointer);
+    const profile = RENDER_QUALITY_PROFILES[quality];
+    const nextRatio = renderPixelRatio(
+      nextWidth,
+      nextHeight,
+      window.devicePixelRatio || 1,
+      quality,
+    );
+
+    cssWidth = nextWidth;
+    cssHeight = nextHeight;
+    adaptiveRatioCeiling = nextRatio;
+    const preservedMobileRatio = previousQuality === "MOBILE"
+      ? clamp(pixelRatio, MOBILE_MIN_PIXEL_RATIO, adaptiveRatioCeiling)
+      : adaptiveRatioCeiling;
+    glowRatio = profile.glowRatio;
+    focalLength = cssHeight * (cssWidth < cssHeight ? 0.72 : 0.8);
+    horizon = cssHeight * (cssWidth < cssHeight ? 0.46 : 0.62);
+    applyBackingResolution(
+      quality === "MOBILE" ? preservedMobileRatio : nextRatio,
+    );
+    averageRenderCostMs = 0;
+    mobileHeadroomSamples = 0;
+    nextAdaptiveResolutionTime = performance.now() + 1600;
+
     if (profile.noiseEnabled) {
       regenerateNoise(frameNumber);
       noisePattern = context.createPattern(noiseLayer.canvas, "repeat");
@@ -887,6 +908,25 @@ export function createExpresswayEngine(
       noisePattern = null;
     }
     renderFrame();
+  }
+
+  function adjustMobileResolution(timestamp: number): void {
+    if (quality !== "MOBILE" || timestamp < nextAdaptiveResolutionTime) return;
+    nextAdaptiveResolutionTime = timestamp + 1000;
+    const hasHeadroom = smoothedFps >= 57 && averageRenderCostMs <= 9.5;
+    mobileHeadroomSamples = hasHeadroom ? mobileHeadroomSamples + 1 : 0;
+    const nextRatio = adaptiveMobilePixelRatio(
+      pixelRatio,
+      adaptiveRatioCeiling,
+      smoothedFps,
+      averageRenderCostMs,
+      mobileHeadroomSamples,
+    );
+    if (Math.abs(nextRatio - pixelRatio) < 0.001) return;
+    applyBackingResolution(nextRatio);
+    averageRenderCostMs = 0;
+    mobileHeadroomSamples = 0;
+    nextAdaptiveResolutionTime = timestamp + 1600;
   }
 
   function projectedAt(
@@ -4034,7 +4074,13 @@ export function createExpresswayEngine(
     directorState = sampleDriveDirector(journeyDistanceMeters, sessionSeed);
     updateVehicles(deltaSeconds);
     updateAudio(timestamp);
+    adjustMobileResolution(timestamp);
+    const renderStartedAt = performance.now();
     renderFrame();
+    const renderCostMs = performance.now() - renderStartedAt;
+    averageRenderCostMs = averageRenderCostMs === 0
+      ? renderCostMs
+      : lerp(averageRenderCostMs, renderCostMs, 0.075);
     emitTelemetry(timestamp);
     frameNumber += 1;
     scheduleFrame();
