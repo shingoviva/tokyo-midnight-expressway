@@ -5,6 +5,7 @@ import {
   RENDER_QUALITY_PROFILES,
   renderPixelRatio,
   selectRenderQuality,
+  signMipmapLevel,
 } from "../app/render-quality.ts";
 
 test("coarse-pointer phones always use the mobile renderer", () => {
@@ -34,6 +35,13 @@ test("mobile resolution responds slowly to headroom and quickly to pressure", ()
   assert.equal(adaptiveMobilePixelRatio(0.75, 0.9, 60, 8, 2), 0.75);
   assert.equal(adaptiveMobilePixelRatio(0.75, 0.9, 60, 8, 3), 0.8);
   assert.equal(adaptiveMobilePixelRatio(0.9, 0.9, 60, 8, 4), 0.9);
+});
+
+test("distant signs always downsample from a larger mipmap", () => {
+  assert.equal(signMipmapLevel(10, 7), 5);
+  assert.equal(signMipmapLevel(24, 7), 4);
+  assert.equal(signMipmapLevel(220, 7), 1);
+  assert.equal(signMipmapLevel(900, 7), 0);
 });
 
 test("desktop quality budgets remain unchanged", () => {

@@ -92,6 +92,24 @@ export function renderPixelRatio(
   );
 }
 
+export function signMipmapLevel(
+  projectedPixelSize: number,
+  mipmapCount: number,
+): number {
+  if (mipmapCount <= 1) return 0;
+  // Always downsample from the next larger source. Rounding could select a
+  // source smaller than the projected sign, producing crawling edges and an
+  // obvious sharpness jump whenever the mip level changed.
+  const desiredSourceSize = Math.max(16, Math.min(1024, projectedPixelSize * 2.25));
+  return Math.max(
+    0,
+    Math.min(
+      mipmapCount - 1,
+      Math.floor(Math.log2(1024 / desiredSourceSize)),
+    ),
+  );
+}
+
 export function adaptiveMobilePixelRatio(
   currentRatio: number,
   ceilingRatio: number,

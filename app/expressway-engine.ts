@@ -36,6 +36,7 @@ import {
   RENDER_QUALITY_PROFILES,
   renderPixelRatio,
   selectRenderQuality,
+  signMipmapLevel,
 } from "./render-quality";
 
 export type Telemetry = {
@@ -529,12 +530,7 @@ export function createExpresswayEngine(
     projectedHeight: number,
   ): CanvasImageSource {
     const projectedMax = Math.max(projectedWidth, projectedHeight) * pixelRatio;
-    const desiredSourceMax = clamp(projectedMax * 2.25, 16, 1024);
-    const level = clamp(
-      Math.round(Math.log2(1024 / desiredSourceMax)),
-      0,
-      sign.mipmaps.length - 1,
-    );
+    const level = signMipmapLevel(projectedMax, sign.mipmaps.length);
     return sign.mipmaps[level] ?? sign.canvas;
   }
 
@@ -547,6 +543,35 @@ export function createExpresswayEngine(
     number,
     { x: number; y: number; frame: number }
   >();
+  const mobileGlowSprites = new Map<string, DrawingLayer>();
+
+  function mobileGlowSprite(
+    color: string,
+  ): { canvas: CanvasImageSource; alpha: number } | null {
+    const match = color.match(
+      /rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*(\d+(?:\.\d+)?))?\s*\)/,
+    );
+    if (!match) return null;
+    const red = clamp(Number(match[1]), 0, 255);
+    const green = clamp(Number(match[2]), 0, 255);
+    const blue = clamp(Number(match[3]), 0, 255);
+    const alpha = clamp(match[4] === undefined ? 1 : Number(match[4]), 0, 1);
+    const key = `${Math.round(red)},${Math.round(green)},${Math.round(blue)}`;
+    let layer = mobileGlowSprites.get(key);
+    if (!layer) {
+      layer = createDrawingLayer(64, 64);
+      const spriteContext = layer.context;
+      const gradient = spriteContext.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, 1)`);
+      gradient.addColorStop(0.2, `rgba(${red}, ${green}, ${blue}, 0.74)`);
+      gradient.addColorStop(0.55, `rgba(${red}, ${green}, ${blue}, 0.17)`);
+      gradient.addColorStop(1, `rgba(${red}, ${green}, ${blue}, 0)`);
+      spriteContext.fillStyle = gradient;
+      spriteContext.fillRect(0, 0, 64, 64);
+      mobileGlowSprites.set(key, layer);
+    }
+    return { canvas: layer.canvas, alpha };
+  }
 
   function vehicleDimensions(kind: VehicleKind): {
     width: number;
@@ -744,9 +769,9 @@ export function createExpresswayEngine(
       0,
     );
     glowLayer.context.imageSmoothingEnabled = true;
-    glowLayer.context.imageSmoothingQuality = quality === "MOBILE" ? "low" : "high";
+    glowLayer.context.imageSmoothingQuality = "high";
     context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = quality === "MOBILE" ? "low" : "high";
+    context.imageSmoothingQuality = "high";
   }
 
   function rebuildStaticGradients(): void {
@@ -1070,17 +1095,26 @@ export function createExpresswayEngine(
       return;
     }
     if (!RENDER_QUALITY_PROFILES[quality].bloomEnabled) {
+      const sprite = mobileGlowSprite(innerColor);
       context.save();
       context.globalCompositeOperation = "screen";
-      context.fillStyle = innerColor;
-      context.globalAlpha = 0.24;
-      context.beginPath();
-      context.arc(x, y, Math.max(0.8, radius * 0.5), 0, TAU);
-      context.fill();
-      context.globalAlpha = 0.82;
-      context.beginPath();
-      context.arc(x, y, Math.max(0.55, radius * 0.2), 0, TAU);
-      context.fill();
+      if (sprite) {
+        const diameter = Math.max(1.6, radius * 2);
+        context.globalAlpha = sprite.alpha;
+        context.drawImage(
+          sprite.canvas,
+          x - diameter * 0.5,
+          y - diameter * 0.5,
+          diameter,
+          diameter,
+        );
+      } else {
+        context.globalAlpha = 0.72;
+        context.fillStyle = innerColor;
+        context.beginPath();
+        context.arc(x, y, Math.max(0.65, radius * 0.25), 0, TAU);
+        context.fill();
+      }
       context.restore();
       return;
     }
@@ -4176,6 +4210,10 @@ export function createExpresswayEngine(
     depthSceneItems.length = 0;
     vehicles.length = 0;
     lightTrailPositions.clear();
+    for (const layer of mobileGlowSprites.values()) {
+      resizeDrawingLayer(layer, 1, 1);
+    }
+    mobileGlowSprites.clear();
     noisePattern = null;
     noiseImageData = null;
     skyGradientCache = null;
