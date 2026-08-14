@@ -1375,7 +1375,10 @@ export function createExpresswayEngine(
           const windowHash = seeded(index * 101 + row * 13 + column, side * 17 + 229);
           const windowX = left + (column + 0.86) * 3.1 * base.scale;
           if (windowX > left + width - 1) continue;
-          const lit = windowHash >= (closeCanyon ? 0.56 : 0.68);
+          const litThreshold =
+            (closeCanyon ? 0.56 : 0.68) +
+            qualityProfile.buildingWindowLitBias;
+          const lit = windowHash >= litThreshold;
           const warm = windowHash > 0.946;
           context.fillStyle = lit
             ? warm
