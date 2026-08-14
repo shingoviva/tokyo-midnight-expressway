@@ -2294,8 +2294,12 @@ export function drawProceduralLandmark(
   context.save();
   glow.save();
   const distanceBrightness = lerp(0.04, 1, landmark.alpha);
-  context.filter = `brightness(${distanceBrightness})`;
-  glow.filter = `brightness(${distanceBrightness})`;
+  if (options.quality !== "MOBILE") {
+    context.filter = `brightness(${distanceBrightness})`;
+    glow.filter = `brightness(${distanceBrightness})`;
+  } else {
+    context.globalAlpha *= distanceBrightness;
+  }
   if (landmark.kind === "tokyo-tower") {
     drawTokyoTower(context, glow, options, landmark);
   } else if (landmark.kind === "skytree") {

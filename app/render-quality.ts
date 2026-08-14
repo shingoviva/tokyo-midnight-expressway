@@ -11,6 +11,7 @@ export type RenderQualityProfile = Readonly<{
   vehicleCount: number;
   noiseEnabled: boolean;
   minimumFrameIntervalMs: number;
+  bloomEnabled: boolean;
 }>;
 
 export const RENDER_QUALITY_PROFILES: Readonly<
@@ -27,6 +28,7 @@ export const RENDER_QUALITY_PROFILES: Readonly<
     vehicleCount: 20,
     noiseEnabled: true,
     minimumFrameIntervalMs: 0,
+    bloomEnabled: true,
   },
   BALANCED: {
     ratioCap: 1.45,
@@ -39,22 +41,24 @@ export const RENDER_QUALITY_PROFILES: Readonly<
     vehicleCount: 20,
     noiseEnabled: true,
     minimumFrameIntervalMs: 0,
+    bloomEnabled: true,
   },
   MOBILE: {
     // iPhones frequently expose DPR 3. Rendering a full-screen canvas near
     // that density plus a blurred glow buffer is needlessly expensive for a
     // moving night scene. A deliberately soft backing surface is preferable
     // to uneven frame delivery on thermally constrained mobile Safari.
-    ratioCap: 0.78,
-    pixelBudget: 650_000,
-    glowRatio: 0.2,
-    cityFarDistance: 1_950,
-    buildingSpacing: 76,
-    buildingWindowRows: 6,
-    buildingWindowColumns: 3,
-    vehicleCount: 7,
+    ratioCap: 0.7,
+    pixelBudget: 420_000,
+    glowRatio: 0.16,
+    cityFarDistance: 1_650,
+    buildingSpacing: 105,
+    buildingWindowRows: 3,
+    buildingWindowColumns: 2,
+    vehicleCount: 6,
     noiseEnabled: false,
-    minimumFrameIntervalMs: 1000 / 30,
+    minimumFrameIntervalMs: 0,
+    bloomEnabled: false,
   },
 } as const;
 

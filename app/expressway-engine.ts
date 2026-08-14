@@ -738,9 +738,9 @@ export function createExpresswayEngine(
       0,
     );
     glowLayer.context.imageSmoothingEnabled = true;
-    glowLayer.context.imageSmoothingQuality = "high";
+    glowLayer.context.imageSmoothingQuality = quality === "MOBILE" ? "low" : "high";
     context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
+    context.imageSmoothingQuality = quality === "MOBILE" ? "low" : "high";
   }
 
   function rebuildStaticGradients(): void {
@@ -929,11 +929,11 @@ export function createExpresswayEngine(
     roadPoints.length = 0;
     const profile = quality === "MOBILE"
       ? [
-          [100, 3],
-          [300, 7],
-          [700, 14],
-          [1200, 28],
-          [FAR_DISTANCE, 52],
+          [120, 5],
+          [360, 12],
+          [800, 24],
+          [1300, 46],
+          [FAR_DISTANCE, 80],
         ] as const
       : quality === "BALANCED"
         ? [
@@ -981,6 +981,7 @@ export function createExpresswayEngine(
   }
 
   function clearGlow(): void {
+    if (!RENDER_QUALITY_PROFILES[quality].bloomEnabled) return;
     const glowContext = glowLayer.context;
     glowContext.save();
     glowContext.setTransform(1, 0, 0, 1, 0, 0);
@@ -989,6 +990,7 @@ export function createExpresswayEngine(
   }
 
   function occludeGlowPolygon(points: ReadonlyArray<readonly [number, number]>): void {
+    if (!RENDER_QUALITY_PROFILES[quality].bloomEnabled) return;
     if (points.length < 3) return;
     const glowContext = glowLayer.context;
     glowContext.save();
@@ -1006,6 +1008,7 @@ export function createExpresswayEngine(
     height: number,
     alpha = 1,
   ): void {
+    if (!RENDER_QUALITY_PROFILES[quality].bloomEnabled) return;
     if (width <= 0 || height <= 0) return;
     const glowContext = glowLayer.context;
     glowContext.save();
@@ -1024,6 +1027,17 @@ export function createExpresswayEngine(
     outerColor = "rgba(0,0,0,0)",
   ): void {
     if (x < -radius || x > cssWidth + radius || y < -radius || y > cssHeight + radius) {
+      return;
+    }
+    if (!RENDER_QUALITY_PROFILES[quality].bloomEnabled) {
+      context.save();
+      context.globalCompositeOperation = "screen";
+      context.globalAlpha = 0.72;
+      context.fillStyle = innerColor;
+      context.beginPath();
+      context.arc(x, y, Math.max(0.65, radius * 0.32), 0, TAU);
+      context.fill();
+      context.restore();
       return;
     }
     const glowContext = glowLayer.context;
@@ -1173,23 +1187,31 @@ export function createExpresswayEngine(
     occludeGlowPolygon(sideFace);
 
     context.globalAlpha = atmosphericAlpha;
-    const facadeGradient = context.createLinearGradient(left, 0, left + width, 0);
-    facadeGradient.addColorStop(
-      0,
-      skylineColor(Math.max(2, bodyLightness - 5), bodyLightness, bodyLightness + 3),
-    );
-    facadeGradient.addColorStop(
-      0.48,
-      skylineColor(bodyLightness + 2, bodyLightness + 7, bodyLightness + 11),
-    );
-    facadeGradient.addColorStop(
-      1,
-      skylineColor(Math.max(2, bodyLightness - 4), bodyLightness, bodyLightness + 5),
-    );
-    context.fillStyle = facadeGradient;
+    if (quality === "MOBILE") {
+      context.fillStyle = skylineColor(
+        bodyLightness,
+        bodyLightness + 5,
+        bodyLightness + 9,
+      );
+    } else {
+      const facadeGradient = context.createLinearGradient(left, 0, left + width, 0);
+      facadeGradient.addColorStop(
+        0,
+        skylineColor(Math.max(2, bodyLightness - 5), bodyLightness, bodyLightness + 3),
+      );
+      facadeGradient.addColorStop(
+        0.48,
+        skylineColor(bodyLightness + 2, bodyLightness + 7, bodyLightness + 11),
+      );
+      facadeGradient.addColorStop(
+        1,
+        skylineColor(Math.max(2, bodyLightness - 4), bodyLightness, bodyLightness + 5),
+      );
+      context.fillStyle = facadeGradient;
+    }
     context.fillRect(left, top, width, height + 2);
     const facadeTextureVisibility = 0.21 * farFade(z, 700, 1060);
-    if (concretePattern && facadeTextureVisibility > 0.001) {
+    if (quality !== "MOBILE" && concretePattern && facadeTextureVisibility > 0.001) {
       context.save();
       context.globalAlpha = atmosphericAlpha * facadeTextureVisibility;
       transformObjectPattern(
@@ -1476,7 +1498,7 @@ export function createExpresswayEngine(
     } else if (item.kind === "landmark") {
       drawProceduralLandmark(
         context,
-        glowLayer.context,
+        quality === "MOBILE" ? context : glowLayer.context,
         createLandmarkOptions(),
         item.landmark,
       );
@@ -1569,7 +1591,7 @@ export function createExpresswayEngine(
     ]);
 
     const textureVisibility = farFade(far.z, 720, 1180) * 0.32;
-    if (asphaltPattern && textureVisibility > 0.001) {
+    if (quality !== "MOBILE" && asphaltPattern && textureVisibility > 0.001) {
       context.save();
       context.globalAlpha = textureVisibility;
       transformGroundPattern(
@@ -2064,7 +2086,7 @@ export function createExpresswayEngine(
     context.fillStyle = spec.level === 0 ? "#2c353a" : "#21292e";
     fillPolygon(context, deckTop);
     const deckTextureVisibility = 0.16 * farFade(near.z, 620, 980);
-    if (metalPattern && deckTextureVisibility > 0.001) {
+    if (quality !== "MOBILE" && metalPattern && deckTextureVisibility > 0.001) {
       context.save();
       context.globalAlpha = deckTextureVisibility;
       transformGroundPattern(
@@ -2323,10 +2345,11 @@ export function createExpresswayEngine(
   function collectSceneObjects(): void {
     sceneObjects.length = 0;
 
-    const lightFirst = Math.floor((totalDistanceMeters - LIGHT_SPACING) / LIGHT_SPACING);
-    const lightLast = Math.ceil((totalDistanceMeters + FAR_DISTANCE) / LIGHT_SPACING);
+    const lightSpacing = quality === "MOBILE" ? LIGHT_SPACING * 2 : LIGHT_SPACING;
+    const lightFirst = Math.floor((totalDistanceMeters - lightSpacing) / lightSpacing);
+    const lightLast = Math.ceil((totalDistanceMeters + FAR_DISTANCE) / lightSpacing);
     for (let index = lightFirst; index <= lightLast; index += 1) {
-      const world = index * LIGHT_SPACING;
+      const world = index * lightSpacing;
       const z = world - totalDistanceMeters;
       if (z < NEAR_DISTANCE || z > FAR_DISTANCE) continue;
       sceneObjects.push({
@@ -2544,7 +2567,7 @@ export function createExpresswayEngine(
         context.lineTo(base.x + portalHalf, base.groundY + 2);
         context.stroke();
         const portalTextureVisibility = 0.18 * farFade(object.z, 520, 860);
-        if (concretePattern && portalTextureVisibility > 0.001) {
+        if (quality !== "MOBILE" && concretePattern && portalTextureVisibility > 0.001) {
           context.globalAlpha = visibility * portalTextureVisibility;
           transformObjectPattern(
             concretePattern,
@@ -3349,7 +3372,7 @@ export function createExpresswayEngine(
     const alternating = (Math.floor(world / 9.6) & 1) === 0;
     const chevrons = location === 11 || (location === 0 && locationLocal(world) > 510);
     const soundwall = location === 2 || location === 12;
-    const baseTexture = concretePattern;
+    const baseTexture = quality === "MOBILE" ? null : concretePattern;
 
     for (const side of [-1, 1] as const) {
       const height = side < 0 ? 0.9 : 0.84;
@@ -3533,6 +3556,7 @@ export function createExpresswayEngine(
   }
 
   function compositeBloom(): void {
+    if (!RENDER_QUALITY_PROFILES[quality].bloomEnabled) return;
     context.save();
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.globalCompositeOperation = "screen";
@@ -3862,7 +3886,8 @@ export function createExpresswayEngine(
   }
 
   function emitTelemetry(timestamp: number): void {
-    if (timestamp - lastTelemetryTime < 250) return;
+    const telemetryInterval = quality === "MOBILE" ? 1000 : 250;
+    if (timestamp - lastTelemetryTime < telemetryInterval) return;
     lastTelemetryTime = timestamp;
     const route = routeAndScene();
     onTelemetry({
