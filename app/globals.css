@@ -90,6 +90,31 @@ button {
   animation: grain-shift 0.24s steps(2, end) infinite;
 }
 
+.drive-shell[data-quality="mobile"] .optical-noise {
+  display: none;
+}
+
+.drive-shell[data-quality="mobile"] .live-status,
+.drive-shell[data-quality="mobile"] .telemetry-panel,
+.drive-shell[data-quality="mobile"] .drive-controls,
+.drive-shell[data-quality="mobile"] .restore-hud {
+  backdrop-filter: none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .optical-noise {
+    display: none;
+  }
+
+  .start-button,
+  .live-status,
+  .telemetry-panel,
+  .drive-controls,
+  .restore-hud {
+    backdrop-filter: none;
+  }
+}
+
 .start-screen {
   position: fixed;
   inset: 0;

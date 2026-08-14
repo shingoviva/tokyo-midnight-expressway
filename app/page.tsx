@@ -138,6 +138,7 @@ export default function Home() {
       className="drive-shell"
       data-ready={ready}
       data-started={experienceStarted}
+      data-quality={telemetry.quality.toLowerCase()}
     >
       <canvas
         ref={canvasRef}

@@ -30,6 +30,11 @@ import {
   type ProceduralLandmarkOptions,
 } from "./procedural-landmarks";
 import { transverseOverpassPierLaterals } from "./overpass-layout";
+import {
+  RENDER_QUALITY_PROFILES,
+  renderPixelRatio,
+  selectRenderQuality,
+} from "./render-quality";
 
 export type Telemetry = {
   speedKmh: number;
@@ -844,21 +849,19 @@ export function createExpresswayEngine(
     const nextWidth = Math.max(1, Math.round(bounds.width || window.innerWidth));
     const nextHeight = Math.max(1, Math.round(bounds.height || window.innerHeight));
     const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
-    const mobile = coarsePointer || nextWidth < 760;
-
-    quality = mobile ? "MOBILE" : nextWidth < 1280 ? "BALANCED" : "HIGH";
-    const ratioCap = quality === "HIGH" ? 1.65 : quality === "BALANCED" ? 1.45 : 1.18;
-    const pixelBudget = quality === "HIGH" ? 5_200_000 : quality === "BALANCED" ? 3_600_000 : 2_100_000;
-    const budgetRatio = Math.sqrt(pixelBudget / (nextWidth * nextHeight));
-    const nextRatio = Math.max(
-      0.75,
-      Math.min(window.devicePixelRatio || 1, ratioCap, budgetRatio),
+    quality = selectRenderQuality(nextWidth, coarsePointer);
+    const profile = RENDER_QUALITY_PROFILES[quality];
+    const nextRatio = renderPixelRatio(
+      nextWidth,
+      nextHeight,
+      window.devicePixelRatio || 1,
+      quality,
     );
 
     cssWidth = nextWidth;
     cssHeight = nextHeight;
     pixelRatio = nextRatio;
-    glowRatio = quality === "MOBILE" ? 0.42 : 0.5;
+    glowRatio = profile.glowRatio;
     focalLength = cssHeight * (cssWidth < cssHeight ? 0.72 : 0.8);
     horizon = cssHeight * (cssWidth < cssHeight ? 0.46 : 0.62);
     lightTrailPositions.clear();
@@ -877,8 +880,12 @@ export function createExpresswayEngine(
     );
     configureContextTransforms();
     rebuildStaticGradients();
-    regenerateNoise(frameNumber);
-    noisePattern = context.createPattern(noiseLayer.canvas, "repeat");
+    if (profile.noiseEnabled) {
+      regenerateNoise(frameNumber);
+      noisePattern = context.createPattern(noiseLayer.canvas, "repeat");
+    } else {
+      noisePattern = null;
+    }
     renderFrame();
   }
 
@@ -922,11 +929,11 @@ export function createExpresswayEngine(
     roadPoints.length = 0;
     const profile = quality === "MOBILE"
       ? [
-          [80, 1.3],
-          [240, 2.8],
-          [600, 6],
-          [1100, 13],
-          [FAR_DISTANCE, 25],
+          [90, 2],
+          [280, 4.5],
+          [650, 9],
+          [1150, 20],
+          [FAR_DISTANCE, 38],
         ] as const
       : quality === "BALANCED"
         ? [
@@ -1221,9 +1228,10 @@ export function createExpresswayEngine(
     if (height > 3 && width > 2) {
       const realRows = Math.max(3, Math.floor(heightMeters / 3.35));
       const realColumns = Math.max(2, Math.floor(widthMeters / 3.1));
-      const maximumRows = quality === "MOBILE" ? 12 : 30;
+      const qualityProfile = RENDER_QUALITY_PROFILES[quality];
+      const maximumRows = qualityProfile.buildingWindowRows;
       const rowStep = Math.max(1, Math.ceil(realRows / maximumRows));
-      const maximumColumns = quality === "MOBILE" ? 5 : 9;
+      const maximumColumns = qualityProfile.buildingWindowColumns;
       const columnStep = Math.max(1, Math.ceil(realColumns / maximumColumns));
       const windowWidth = clamp(base.scale * 2.05, 0.65, width * 0.18);
       const windowHeight = clamp(base.scale * 1.08, 0.55, 4.2);
@@ -1234,7 +1242,7 @@ export function createExpresswayEngine(
 
       const facadeDetailVisibility =
         0.34 * farFade(z, 470, 820) * smoothstep(6, 18, width);
-      if (facadeDetailVisibility > 0.002) {
+      if (quality !== "MOBILE" && facadeDetailVisibility > 0.002) {
         context.save();
         context.globalAlpha *= facadeDetailVisibility;
         context.strokeStyle = "rgba(4, 9, 12, 0.9)";
@@ -1277,7 +1285,7 @@ export function createExpresswayEngine(
                 : "rgba(104, 151, 170, 0.58)"
             : "rgba(3, 12, 17, 0.78)";
           context.fillRect(windowX, windowY, windowWidth, windowHeight);
-          if (windowHash > 0.978) {
+          if (quality !== "MOBILE" && windowHash > 0.978) {
             drawGlowDot(
               windowX + windowWidth * 0.5,
               windowY + windowHeight * 0.5,
@@ -1432,9 +1440,11 @@ export function createExpresswayEngine(
           world < site.world + farClearance
         );
       });
-    const spacing = quality === "MOBILE" ? 51 : quality === "BALANCED" ? 41 : 35;
+    const qualityProfile = RENDER_QUALITY_PROFILES[quality];
+    const spacing = qualityProfile.buildingSpacing;
+    const cityFarDistance = qualityProfile.cityFarDistance;
     const first = Math.floor((totalDistanceMeters - spacing) / spacing);
-    const last = Math.ceil((totalDistanceMeters + CITY_FAR_DISTANCE + 90) / spacing);
+    const last = Math.ceil((totalDistanceMeters + cityFarDistance + 90) / spacing);
     for (let index = last; index >= first; index -= 1) {
       const world = index * spacing + (seeded(index, 307) - 0.5) * spacing * 0.58;
       const z = world - totalDistanceMeters;
@@ -2386,7 +2396,10 @@ export function createExpresswayEngine(
       }
     }
 
-    const activeVehicleCount = quality === "MOBILE" ? 12 : vehicles.length;
+    const activeVehicleCount = Math.min(
+      RENDER_QUALITY_PROFILES[quality].vehicleCount,
+      vehicles.length,
+    );
     for (let index = 0; index < activeVehicleCount; index += 1) {
       const vehicle = vehicles[index];
       if (vehicle.z >= NEAR_DISTANCE && vehicle.z < FAR_DISTANCE) {
@@ -3523,8 +3536,12 @@ export function createExpresswayEngine(
     context.save();
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.globalCompositeOperation = "screen";
-    context.globalAlpha = quality === "MOBILE" ? 0.68 : 0.82;
-    context.filter = `blur(${Math.max(3, Math.round(pixelRatio * (quality === "MOBILE" ? 4 : 7)))}px)`;
+    context.globalAlpha = quality === "MOBILE" ? 0.62 : 0.82;
+    // The mobile glow surface is already strongly downsampled. Upscaling it
+    // supplies a soft bloom without invoking Safari's costly canvas blur.
+    context.filter = quality === "MOBILE"
+      ? "none"
+      : `blur(${Math.max(3, Math.round(pixelRatio * 7))}px)`;
     context.drawImage(
       glowLayer.canvas,
       0,
@@ -3537,7 +3554,7 @@ export function createExpresswayEngine(
       canvas.height,
     );
     context.filter = "none";
-    context.globalAlpha = 0.28;
+    context.globalAlpha = quality === "MOBILE" ? 0.2 : 0.28;
     context.drawImage(
       glowLayer.canvas,
       0,
@@ -3561,7 +3578,10 @@ export function createExpresswayEngine(
     context.fillStyle = vignetteCache ?? "rgba(0, 0, 0, 0)";
     context.fillRect(0, 0, cssWidth, cssHeight);
 
-    if (frameNumber % (quality === "MOBILE" ? 12 : 7) === 0) {
+    if (
+      RENDER_QUALITY_PROFILES[quality].noiseEnabled &&
+      frameNumber % 7 === 0
+    ) {
       regenerateNoise(frameNumber);
     }
     if (noisePattern) {
