@@ -19,6 +19,10 @@ test("mobile rendering limits both pixels and expensive effects", () => {
   assert.equal(renderPixelRatio(1_179, 2_556, 3, "MOBILE"), 0.7);
   assert.ok(profile.glowRatio < RENDER_QUALITY_PROFILES.HIGH.glowRatio);
   assert.ok(profile.vehicleCount < RENDER_QUALITY_PROFILES.HIGH.vehicleCount);
+  assert.equal(profile.buildingSpacing, 92);
+  assert.equal(profile.buildingWindowRows, 5);
+  assert.equal(profile.buildingWindowColumns, 3);
+  assert.equal(profile.vehicleCount, 8);
   assert.equal(profile.noiseEnabled, false);
   assert.equal(profile.minimumFrameIntervalMs, 1000 / 60);
   assert.equal(profile.bloomEnabled, false);

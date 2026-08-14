@@ -55,10 +55,10 @@ export const RENDER_QUALITY_PROFILES: Readonly<
     pixelBudget: 420_000,
     glowRatio: 0.16,
     cityFarDistance: 1_650,
-    buildingSpacing: 105,
-    buildingWindowRows: 3,
-    buildingWindowColumns: 2,
-    vehicleCount: 6,
+    buildingSpacing: 92,
+    buildingWindowRows: 5,
+    buildingWindowColumns: 3,
+    vehicleCount: 8,
     noiseEnabled: false,
     // Cap ProMotion displays at 60 rendered frames without penalising normal
     // 60 Hz iPhones. This leaves more thermal headroom for sharper pixels.

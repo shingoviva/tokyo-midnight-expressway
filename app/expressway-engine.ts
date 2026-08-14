@@ -1072,10 +1072,14 @@ export function createExpresswayEngine(
     if (!RENDER_QUALITY_PROFILES[quality].bloomEnabled) {
       context.save();
       context.globalCompositeOperation = "screen";
-      context.globalAlpha = 0.72;
       context.fillStyle = innerColor;
+      context.globalAlpha = 0.24;
       context.beginPath();
-      context.arc(x, y, Math.max(0.65, radius * 0.32), 0, TAU);
+      context.arc(x, y, Math.max(0.8, radius * 0.5), 0, TAU);
+      context.fill();
+      context.globalAlpha = 0.82;
+      context.beginPath();
+      context.arc(x, y, Math.max(0.55, radius * 0.2), 0, TAU);
       context.fill();
       context.restore();
       return;
