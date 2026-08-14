@@ -118,6 +118,46 @@ export function signMipmapLevel(
   );
 }
 
+export function stableSignMipmapLevel(
+  projectedPixelSize: number,
+  mipmapCount: number,
+  previousLevel?: number,
+): number {
+  const idealLevel = signMipmapLevel(projectedPixelSize, mipmapCount);
+  if (previousLevel === undefined || previousLevel === idealLevel) {
+    return idealLevel;
+  }
+
+  const currentLevel = Math.max(0, Math.min(mipmapCount - 1, previousLevel));
+  const currentSourceSize = 1024 / 2 ** currentLevel;
+  if (idealLevel < currentLevel) {
+    // Hold the smaller texture until it is genuinely undersized. This avoids
+    // toggling between mip levels when a far sign sits on a threshold.
+    return projectedPixelSize * 2 > currentSourceSize
+      ? currentLevel - 1
+      : currentLevel;
+  }
+
+  const nextSourceSize = currentSourceSize * 0.5;
+  return projectedPixelSize * 2.7 < nextSourceSize
+    ? currentLevel + 1
+    : currentLevel;
+}
+
+export function stabilizeMobileFarCoordinate(
+  value: number,
+  distance: number,
+  pixelRatio: number,
+): number {
+  const influence = Math.max(0, Math.min(1, (distance - 620) / 780));
+  if (influence <= 0) return value;
+  // Quarter-backing-pixel quantisation removes most subpixel scintillation
+  // while remaining fine enough that forward motion never looks stepped.
+  const step = 0.25 / Math.max(MOBILE_MIN_PIXEL_RATIO, pixelRatio);
+  const snapped = Math.round(value / step) * step;
+  return value + (snapped - value) * influence;
+}
+
 export function adaptiveMobilePixelRatio(
   currentRatio: number,
   ceilingRatio: number,
@@ -135,9 +175,9 @@ export function adaptiveMobilePixelRatio(
   );
   const underPressure = smoothedFps < 52 || renderCostMs > 14;
   const hasSustainedHeadroom =
-    consecutiveHeadroomSamples >= 3 &&
-    smoothedFps >= 57 &&
-    renderCostMs <= 9.5;
+    consecutiveHeadroomSamples >= 10 &&
+    smoothedFps >= 59 &&
+    renderCostMs <= 7.5;
   const next = underPressure
     ? current - MOBILE_RATIO_STEP
     : hasSustainedHeadroom

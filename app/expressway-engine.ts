@@ -38,6 +38,8 @@ import {
   renderPixelRatio,
   selectRenderQuality,
   signMipmapLevel,
+  stabilizeMobileFarCoordinate,
+  stableSignMipmapLevel,
 } from "./render-quality";
 
 export type Telemetry = {
@@ -525,13 +527,30 @@ export function createExpresswayEngine(
     return `rgba(61, 165, 127, ${alpha})`;
   }
 
+  const signMipmapLevels = new Map<string, number>();
+
   function selectSignMipmap(
     sign: ProceduralSignSprite,
     projectedWidth: number,
     projectedHeight: number,
+    stableKey?: string,
   ): CanvasImageSource {
     const projectedMax = Math.max(projectedWidth, projectedHeight) * pixelRatio;
-    const level = signMipmapLevel(projectedMax, sign.mipmaps.length);
+    let level = signMipmapLevel(projectedMax, sign.mipmaps.length);
+    if (quality === "MOBILE" && stableKey) {
+      level = stableSignMipmapLevel(
+        projectedMax,
+        sign.mipmaps.length,
+        signMipmapLevels.get(stableKey),
+      );
+      signMipmapLevels.delete(stableKey);
+      signMipmapLevels.set(stableKey, level);
+      while (signMipmapLevels.size > 256) {
+        const oldestKey = signMipmapLevels.keys().next().value;
+        if (oldestKey === undefined) break;
+        signMipmapLevels.delete(oldestKey);
+      }
+    }
     return sign.mipmaps[level] ?? sign.canvas;
   }
 
@@ -939,7 +958,7 @@ export function createExpresswayEngine(
   function adjustMobileResolution(timestamp: number): void {
     if (quality !== "MOBILE" || timestamp < nextAdaptiveResolutionTime) return;
     nextAdaptiveResolutionTime = timestamp + 1000;
-    const hasHeadroom = smoothedFps >= 57 && averageRenderCostMs <= 9.5;
+    const hasHeadroom = smoothedFps >= 59 && averageRenderCostMs <= 7.5;
     mobileHeadroomSamples = hasHeadroom ? mobileHeadroomSamples + 1 : 0;
     const nextRatio = adaptiveMobilePixelRatio(
       pixelRatio,
@@ -971,17 +990,25 @@ export function createExpresswayEngine(
     const elevationOffset =
       pathElevation(world) - cameraElevation - elevationTangent * safeZ;
     const scale = focalLength / safeZ;
-    const cameraSway = Math.sin(elapsedTime * 0.72) * 0.026;
-    const bob = Math.sin(elapsedTime * 5.1) * 0.34;
-    const center =
+    const mobileStability = quality === "MOBILE";
+    const cameraSway =
+      Math.sin(elapsedTime * 0.72) * (mobileStability ? 0.018 : 0.026);
+    const bob = Math.sin(elapsedTime * 5.1) * (mobileStability ? 0.12 : 0.34);
+    const rawCenter =
       cssWidth * 0.5 +
       centerOffset * scale -
       cameraSway * scale +
-      Math.sin(elapsedTime * 0.23) * 0.7;
-    const groundY =
+      Math.sin(elapsedTime * 0.23) * (mobileStability ? 0.14 : 0.7);
+    const rawGroundY =
       horizon +
       bob +
       (CAMERA_HEIGHT - elevationOffset) * scale;
+    const center = mobileStability
+      ? stabilizeMobileFarCoordinate(rawCenter, safeZ, pixelRatio)
+      : rawCenter;
+    const groundY = mobileStability
+      ? stabilizeMobileFarCoordinate(rawGroundY, safeZ, pixelRatio)
+      : rawGroundY;
 
     return {
       x: center + lateral * scale,
@@ -1403,7 +1430,23 @@ export function createExpresswayEngine(
                 ? "rgba(164, 202, 216, 0.78)"
                 : "rgba(104, 151, 170, 0.58)"
             : "rgba(3, 12, 17, 0.78)";
-          context.fillRect(windowX, windowY, windowWidth, windowHeight);
+          if (quality === "MOBILE" && z > 620) {
+            const backingPixel =
+              1 / Math.max(MOBILE_MIN_PIXEL_RATIO, pixelRatio);
+            const stableX = Math.round(windowX / backingPixel) * backingPixel;
+            const stableY = Math.round(windowY / backingPixel) * backingPixel;
+            const stableWidth = Math.max(
+              backingPixel,
+              Math.round(windowWidth / backingPixel) * backingPixel,
+            );
+            const stableHeight = Math.max(
+              backingPixel,
+              Math.round(windowHeight / backingPixel) * backingPixel,
+            );
+            context.fillRect(stableX, stableY, stableWidth, stableHeight);
+          } else {
+            context.fillRect(windowX, windowY, windowWidth, windowHeight);
+          }
           if (quality !== "MOBILE" && windowHash > 0.978) {
             drawGlowDot(
               windowX + windowWidth * 0.5,
@@ -1453,15 +1496,20 @@ export function createExpresswayEngine(
         context.clip();
         context.fillStyle = sign.backgroundColor;
         context.fillRect(boardX, boardY, boardWidth, boardHeight);
-        const detailVisibility = smoothstep(
-          4,
-          13,
-          Math.max(boardWidth, boardHeight) * pixelRatio,
-        );
+        const projectedBoardSize =
+          Math.max(boardWidth, boardHeight) * pixelRatio;
+        const detailVisibility = quality === "MOBILE"
+          ? smoothstep(9, 22, projectedBoardSize)
+          : smoothstep(4, 13, projectedBoardSize);
         context.globalAlpha =
           atmosphericAlpha * advertisingVisibility * detailVisibility;
         context.drawImage(
-          selectSignMipmap(sign, boardWidth, boardHeight),
+          selectSignMipmap(
+            sign,
+            boardWidth,
+            boardHeight,
+            `building-${index}-${signIndex}`,
+          ),
           boardX,
           boardY,
           boardWidth,
@@ -2898,11 +2946,18 @@ export function createExpresswayEngine(
     context.fillStyle = sign.backgroundColor;
     context.fillRect(boardX, boardY, boardWidth, boardHeight);
     const projectedMax = Math.max(boardWidth, boardHeight) * pixelRatio;
-    const detailVisibility = smoothstep(5, 14, projectedMax);
+    const detailVisibility = quality === "MOBILE"
+      ? smoothstep(10, 24, projectedMax)
+      : smoothstep(5, 14, projectedMax);
     if (detailVisibility > 0.002) {
       context.globalAlpha = visibility * detailVisibility;
       context.drawImage(
-        selectSignMipmap(sign, boardWidth, boardHeight),
+        selectSignMipmap(
+          sign,
+          boardWidth,
+          boardHeight,
+          `road-${object.index}-${positiveModulo(object.index, roadSigns.length)}`,
+        ),
         boardX,
         boardY,
         boardWidth,
