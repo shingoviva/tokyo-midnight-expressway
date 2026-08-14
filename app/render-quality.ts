@@ -10,6 +10,7 @@ export type RenderQualityProfile = Readonly<{
   buildingWindowColumns: number;
   vehicleCount: number;
   noiseEnabled: boolean;
+  minimumFrameIntervalMs: number;
 }>;
 
 export const RENDER_QUALITY_PROFILES: Readonly<
@@ -25,6 +26,7 @@ export const RENDER_QUALITY_PROFILES: Readonly<
     buildingWindowColumns: 9,
     vehicleCount: 20,
     noiseEnabled: true,
+    minimumFrameIntervalMs: 0,
   },
   BALANCED: {
     ratioCap: 1.45,
@@ -36,20 +38,23 @@ export const RENDER_QUALITY_PROFILES: Readonly<
     buildingWindowColumns: 9,
     vehicleCount: 20,
     noiseEnabled: true,
+    minimumFrameIntervalMs: 0,
   },
   MOBILE: {
     // iPhones frequently expose DPR 3. Rendering a full-screen canvas near
     // that density plus a blurred glow buffer is needlessly expensive for a
-    // moving night scene. One CSS pixel remains crisp at handset distance.
-    ratioCap: 1,
-    pixelBudget: 1_050_000,
-    glowRatio: 0.28,
-    cityFarDistance: 2_250,
-    buildingSpacing: 62,
-    buildingWindowRows: 8,
-    buildingWindowColumns: 4,
-    vehicleCount: 9,
+    // moving night scene. A deliberately soft backing surface is preferable
+    // to uneven frame delivery on thermally constrained mobile Safari.
+    ratioCap: 0.78,
+    pixelBudget: 650_000,
+    glowRatio: 0.2,
+    cityFarDistance: 1_950,
+    buildingSpacing: 76,
+    buildingWindowRows: 6,
+    buildingWindowColumns: 3,
+    vehicleCount: 7,
     noiseEnabled: false,
+    minimumFrameIntervalMs: 1000 / 30,
   },
 } as const;
 
@@ -73,7 +78,7 @@ export function renderPixelRatio(
     profile.pixelBudget / Math.max(1, width * height),
   );
   return Math.max(
-    quality === "MOBILE" ? 0.72 : 0.75,
+    quality === "MOBILE" ? 0.62 : 0.75,
     Math.min(devicePixelRatio || 1, profile.ratioCap, budgetRatio),
   );
 }

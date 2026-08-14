@@ -929,11 +929,11 @@ export function createExpresswayEngine(
     roadPoints.length = 0;
     const profile = quality === "MOBILE"
       ? [
-          [90, 2],
-          [280, 4.5],
-          [650, 9],
-          [1150, 20],
-          [FAR_DISTANCE, 38],
+          [100, 3],
+          [300, 7],
+          [700, 14],
+          [1200, 28],
+          [FAR_DISTANCE, 52],
         ] as const
       : quality === "BALANCED"
         ? [
@@ -3553,8 +3553,13 @@ export function createExpresswayEngine(
       canvas.width,
       canvas.height,
     );
+    if (quality === "MOBILE") {
+      context.restore();
+      configureContextTransforms();
+      return;
+    }
     context.filter = "none";
-    context.globalAlpha = quality === "MOBILE" ? 0.2 : 0.28;
+    context.globalAlpha = 0.28;
     context.drawImage(
       glowLayer.canvas,
       0,
@@ -3980,6 +3985,17 @@ export function createExpresswayEngine(
   function frame(timestamp: number): void {
     animationFrame = 0;
     if (!started || destroyed || paused || hidden) return;
+
+    const minimumFrameInterval =
+      RENDER_QUALITY_PROFILES[quality].minimumFrameIntervalMs;
+    if (
+      lastFrameTime !== 0 &&
+      minimumFrameInterval > 0 &&
+      timestamp - lastFrameTime < minimumFrameInterval - 2
+    ) {
+      scheduleFrame();
+      return;
+    }
 
     const elapsedMilliseconds = lastFrameTime === 0 ? 16.67 : timestamp - lastFrameTime;
     lastFrameTime = timestamp;
